@@ -1,0 +1,46 @@
+; PHP 8.3/8.4 (CGI) recommended settings for ロリポップ！スタンダード
+; Save as php.ini in the CGI root for the target site.
+
+; --- Core / safety ---
+expose_php = Off
+short_open_tag = Off
+default_charset = UTF-8
+date.timezone = Asia/Tokyo
+allow_url_fopen = On
+allow_url_include = Off
+
+; --- Session ---
+session.auto_start = 0
+session.use_trans_sid = 0
+session.use_only_cookies = 1
+session.use_strict_mode = 1
+session.cookie_httponly = 1
+session.cookie_samesite = Lax
+; Set Secure to 1 in production (HTTPS only). Use 0 only for local HTTP testing.
+session.cookie_secure = 1
+session.cookie_lifetime = 0
+; Adjust to align with SESSION_TTL_SECONDS (e.g., 21600 = 6h)
+session.gc_maxlifetime = 21600
+; Use a dedicated directory under document root or home for files handler
+; session.save_path = "/home/xxx/sessions"
+; Uncomment and configure if using a custom handler (e.g., DB-backed)
+; session.save_handler = user
+
+; --- Uploads ---
+upload_max_filesize = 100M
+post_max_size = 100M
+
+; --- Error handling ---
+display_errors = Off
+log_errors = On
+error_reporting = 22527
+
+; --- OPcache (enable on CGI to mitigate module版の無効化) ---
+opcache.enable = 1
+opcache.enable_cli = 0
+opcache.memory_consumption = 128
+opcache.interned_strings_buffer = 16
+opcache.max_accelerated_files = 10000
+opcache.validate_timestamps = 1
+opcache.revalidate_freq = 60
+opcache.fast_shutdown = 1
