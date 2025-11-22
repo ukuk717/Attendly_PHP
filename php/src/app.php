@@ -18,6 +18,9 @@ use Attendly\Controllers\AuthController;
 use Attendly\Security\RequireAuthMiddleware;
 use Attendly\Middleware\CurrentUserMiddleware;
 use Attendly\Controllers\RegisterController;
+use Attendly\Controllers\PasswordResetController;
+use Attendly\Controllers\PasswordResetUpdateController;
+use Attendly\Controllers\RegisterVerifyController;
 
 function create_app(): \Slim\App
 {
@@ -115,6 +118,21 @@ function create_app(): \Slim\App
     $app->get('/register', [$registerController, 'show']);
     $app->post('/register', [$registerController, 'register']);
 
+    // Password reset (request only; full flow TBD)
+    $passwordReset = new PasswordResetController($view);
+    $app->get('/password/reset', [$passwordReset, 'showRequest']);
+    $app->post('/password/reset', [$passwordReset, 'request']);
+
+    $passwordResetUpdate = new PasswordResetUpdateController($view);
+    $app->get('/password/reset/{token}', [$passwordResetUpdate, 'show']);
+    $app->post('/password/reset/{token}', [$passwordResetUpdate, 'update']);
+
+    $registerVerify = new RegisterVerifyController($view);
+    $app->get('/register/verify', [$registerVerify, 'show']);
+    $app->post('/register/verify', [$registerVerify, 'verify']);
+    $app->post('/register/verify/resend', [$registerVerify, 'resend']);
+    $app->post('/register/verify/cancel', [$registerVerify, 'cancel']);
+
     $app->get('/dashboard', function (ServerRequestInterface $request, ResponseInterface $response) use ($view): ResponseInterface {
         $flashes = Flash::consume();
         $html = $view->renderWithLayout('dashboard', [
@@ -134,6 +152,18 @@ function create_app(): \Slim\App
         }
         $response->getBody()->write(json_encode(['user' => $user], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
+    });
+
+    // Static: styles.css (for built-in server/slim routing)
+    $app->get('/styles.css', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        $path = dirname(__DIR__) . '/public/styles.css';
+        if (!is_file($path)) {
+            return $response->withStatus(404);
+        }
+        $response->getBody()->write((string)file_get_contents($path));
+        return $response
+            ->withHeader('Content-Type', 'text/css; charset=utf-8')
+            ->withHeader('Cache-Control', 'public, max-age=300');
     });
 
     return $app;

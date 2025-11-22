@@ -3,5 +3,8 @@
 <p class="meta">PHP: <?= $e($php ?? '') ?></p>
 <p class="meta">タイムゾーン: <?= $e($timezone ?? '') ?></p>
 <p class="meta">CSRF Token: <code><?= $e($csrf ?? '') ?></code></p>
+<?php if (!empty($currentUser)): ?>
+  <p class="meta">ログイン中: <?= $e($currentUser['email'] ?? '') ?></p>
+<?php endif; ?>
 <p>このページは Slim + プレーンPHPビューの疎通確認用です。</p>
 <p>APIステータス確認は <code>/status</code> を利用してください。</p>

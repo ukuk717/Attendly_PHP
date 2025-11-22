@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Slim\Psr7\Response;
 
 final class CsrfToken
 {
@@ -46,15 +47,15 @@ final class CsrfMiddleware implements MiddlewareInterface
         }
 
         if (!hash_equals($expected, (string)$provided)) {
-            $response = $handler->handle($request);
-            return $this->deny($response);
+            return $this->deny();
         }
 
         return $handler->handle($request);
     }
 
-    private function deny(ResponseInterface $response): ResponseInterface
+    private function deny(): ResponseInterface
     {
+        $response = new Response();
         $response->getBody()->write(json_encode(['error' => 'invalid_csrf_token'], JSON_UNESCAPED_SLASHES));
         return $response
             ->withStatus(400)

@@ -10,17 +10,21 @@ use Attendly\Support\SessionAuth;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Attendly\Support\PasswordPolicy;
 
 final class RegisterController
 {
     private int $minPasswordLength;
+    private PasswordPolicy $passwordPolicy;
 
     public function __construct(private View $view)
     {
-        $this->minPasswordLength = (int)($_ENV['MIN_PASSWORD_LENGTH'] ?? 12);
+        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 12;
+        $this->minPasswordLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 12;
         if ($this->minPasswordLength < 8) {
             $this->minPasswordLength = 8; // セキュリティ下限
         }
+        $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength);
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -67,8 +71,9 @@ final class RegisterController
         if ($verificationCode !== '' && !preg_match('/^[0-9]{6}$/', $verificationCode)) {
             $errors[] = '確認コードは6桁の数字で入力してください。';
         }
-        if (strlen($password) < $this->minPasswordLength) {
-            $errors[] = "パスワードは {$this->minPasswordLength} 文字以上で入力してください。";
+        $policyResult = $this->passwordPolicy->validate($password);
+        if (!$policyResult['ok']) {
+            $errors = array_merge($errors, $policyResult['errors']);
         }
 
         if (!empty($errors)) {

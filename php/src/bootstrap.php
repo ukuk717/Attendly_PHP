@@ -31,7 +31,13 @@ function attendly_bootstrap_runtime(): void
     date_default_timezone_set($_ENV['APP_TIMEZONE'] ?? APP_DEFAULT_TIMEZONE);
 
     $lifetime = (int)($_ENV['SESSION_TTL_SECONDS'] ?? APP_DEFAULT_SESSION_TTL);
-    $cookieSecure = isset($_ENV['APP_ENV']) && strtolower((string)$_ENV['APP_ENV']) === 'production';
+    $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
+    $secureOverride = $_ENV['APP_COOKIE_SECURE'] ?? null;
+    if ($secureOverride !== null) {
+        $cookieSecure = filter_var($secureOverride, FILTER_VALIDATE_BOOL);
+    } else {
+        $cookieSecure = $env === 'production';
+    }
 
     session_set_cookie_params([
         'lifetime' => $lifetime,

@@ -41,8 +41,12 @@ final class AuthController
         $email = trim((string)($data['email'] ?? ''));
         $password = (string)($data['password'] ?? '');
 
-        if ($email === '' || $password === '') {
-            Flash::add('error', 'メールアドレスとパスワードを入力してください。');
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            Flash::add('error', '有効なメールアドレスを入力してください。');
+            return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        if ($password === '') {
+            Flash::add('error', 'パスワードを入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
 
