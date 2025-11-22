@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace Attendly\Controllers;
 
 use Attendly\Security\CsrfToken;
+use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
+use Attendly\Support\RateLimiter;
 use Attendly\Support\SessionAuth;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
@@ -24,9 +26,10 @@ final class RegisterVerifyController
         }
 
         $query = $request->getQueryParams();
-        $email = isset($query['email']) ? (string)$query['email'] : '';
-        if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $email = '';
+        $email = isset($query['email']) ? trim((string)$query['email']) : '';
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            Flash::add('error', 'メール確認をもう一度やり直してください。');
+            return $response->withStatus(303)->withHeader('Location', '/register');
         }
         $brand = $_ENV['APP_BRAND_NAME'] ?? 'Attendly';
 
@@ -35,8 +38,8 @@ final class RegisterVerifyController
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
-            'email' => $email,
             'brandName' => $brand,
+            'email' => $email,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -86,9 +89,15 @@ final class RegisterVerifyController
         }
 
         // rate limit: 3 per 5 minutes per IP/email
-        $ip = $request->getServerParams()['REMOTE_ADDR'] ?? 'unknown';
+        try {
+            $ip = ClientIpResolver::resolve($request);
+        } catch (\RuntimeException $e) {
+            Flash::add('error', 'クライアントIPアドレスを特定できませんでした。時間をおいて再度お試しください。');
+            $location = '/register/verify' . ($email !== '' ? '?email=' . rawurlencode($email) : '');
+            return $response->withStatus(303)->withHeader('Location', $location);
+        }
         $key = "register_verify_resend:{$ip}:{$email}";
-        $allowed = \Attendly\Support\RateLimiter::allow($key, 3, 60 * 5);
+        $allowed = RateLimiter::allow($key, 3, 60 * 5);
         if (!$allowed) {
             Flash::add('error', '再送回数の上限に達しました。暫くしてからお試しください。');
             $location = '/register/verify' . ($email !== '' ? '?email=' . rawurlencode($email) : '');

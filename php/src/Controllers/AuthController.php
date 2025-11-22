@@ -29,6 +29,7 @@ final class AuthController
             'title' => 'ログイン',
             'csrf' => CsrfToken::getToken(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'flashes' => Flash::consume(),
         ]);
         $response->getBody()->write($html);

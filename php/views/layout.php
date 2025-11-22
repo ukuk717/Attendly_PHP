@@ -1,13 +1,16 @@
 <!doctype html>
 <html lang="ja">
 <head>
+  <?php
+    $brand = $brandName ?? ($_ENV['APP_BRAND_NAME'] ?? 'Attendly');
+  ?>
   <?php include __DIR__ . '/_partials/head.php'; ?>
 </head>
 <body>
   <header class="app-header">
     <div class="app-header__brand">
       <?php $homeLink = !empty($currentUser) ? '/dashboard' : '/login'; ?>
-      <h1 class="app-header__title"><a href="<?= $e($homeLink) ?>" class="app-header__home-link">Attendly</a></h1>
+      <h1 class="app-header__title"><a href="<?= $e($homeLink) ?>" class="app-header__home-link"><?= $e($brand) ?></a></h1>
     </div>
     <nav class="app-header__nav">
       <a href="/web">Home</a>

@@ -8,6 +8,7 @@ use Attendly\Security\CsrfToken;
 use Attendly\Support\Flash;
 use Attendly\Support\PasswordPolicy;
 use Attendly\Support\SessionAuth;
+use Attendly\Services\PasswordResetService;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -16,7 +17,7 @@ final class PasswordResetUpdateController
 {
     private PasswordPolicy $policy;
 
-    public function __construct(private View $view)
+    public function __construct(private View $view, private ?PasswordResetService $resetService = null)
     {
         $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 12;
         $minLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 12;
@@ -34,11 +35,19 @@ final class PasswordResetUpdateController
             Flash::add('error', '無効なトークンです。');
             return $response->withStatus(303)->withHeader('Location', '/password/reset');
         }
+
+        $status = $this->getResetService()->validateTokenUsable($token);
+        if (!$status['ok']) {
+            Flash::add('error', 'このリンクは無効または期限切れです。再度パスワードリセットをリクエストしてください。');
+            return $response->withStatus(303)->withHeader('Location', '/password/reset');
+        }
+
         $html = $this->view->renderWithLayout('password_reset_update', [
             'title' => 'パスワード再設定',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'token' => $token,
             'minPasswordLength' => $this->policy->getMinLength(),
         ]);
@@ -65,9 +74,27 @@ final class PasswordResetUpdateController
             return $response->withStatus(303)->withHeader('Location', $safeLocation);
         }
 
-        Flash::add('info', 'パスワード再設定はまだ移行中です。後続実装でトークン検証と更新処理を追加してください。');
-        $safeLocation = '/password/reset/' . rawurlencode($token);
-        return $response->withStatus(303)->withHeader('Location', $safeLocation);
+        $hash = password_hash($password, PASSWORD_DEFAULT);
+        if ($hash === false) {
+            Flash::add('error', 'パスワードの処理中にエラーが発生しました。');
+            $safeLocation = '/password/reset/' . rawurlencode($token);
+            return $response->withStatus(303)->withHeader('Location', $safeLocation);
+        }
+        try {
+            $result = $this->getResetService()->consumeAndResetPassword($token, $hash);
+        } catch (\Throwable $e) {
+            Flash::add('error', 'パスワード更新中にエラーが発生しました。再度お試しください。');
+            $safeLocation = '/password/reset/' . rawurlencode($token);
+            return $response->withStatus(303)->withHeader('Location', $safeLocation);
+        }
+
+        if (!$result['ok']) {
+            Flash::add('error', 'このリンクは無効または期限切れです。再度パスワードリセットをリクエストしてください。');
+            return $response->withStatus(303)->withHeader('Location', '/password/reset');
+        }
+
+        Flash::add('success', 'パスワードを更新しました。新しいパスワードでログインしてください。');
+        return $response->withStatus(303)->withHeader('Location', '/login');
     }
 
     private function sanitizeToken(?string $token): ?string
@@ -84,5 +111,13 @@ final class PasswordResetUpdateController
             return null;
         }
         return $token;
+    }
+
+    private function getResetService(): PasswordResetService
+    {
+        if ($this->resetService === null) {
+            $this->resetService = new PasswordResetService();
+        }
+        return $this->resetService;
     }
 }

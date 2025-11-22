@@ -1,8 +1,8 @@
-# TimeRecordSystem Agent Guide
+# Attendly Agent Guide
 
 - All responses to users must be in Japanese. If the output is in English, it must be translated before output.
 - Please ensure that Japanese text is entered strictly in UTF-8 format. Mixing with other encodings such as Shift-JIS is not permitted.
-
+- The specifications for the Lolipop server are detailed in the `lolipop_server_spec.html` file. Please build your project to function properly using the specifications available on the Standard Plan for this server.
 # Critical AGENTS Warning
 - Please ensure you follow the `# 移行のゴール` outlined in `php_next_steps.md`. This is not a new project, but merely an implementation for the PHP version.
 - Please exercise extreme caution to prevent security risks and implement solutions that do not conflict with known issues.

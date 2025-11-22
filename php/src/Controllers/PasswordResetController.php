@@ -6,14 +6,17 @@ namespace Attendly\Controllers;
 
 use Attendly\Security\CsrfToken;
 use Attendly\Support\Flash;
+use Attendly\Support\ClientIpResolver;
+use Attendly\Support\RateLimiter;
 use Attendly\Support\SessionAuth;
+use Attendly\Services\PasswordResetService;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
 final class PasswordResetController
 {
-    public function __construct(private View $view)
+    public function __construct(private View $view, private ?PasswordResetService $resetService = null)
     {
     }
 
@@ -28,6 +31,7 @@ final class PasswordResetController
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -44,10 +48,15 @@ final class PasswordResetController
             return $response->withStatus(303)->withHeader('Location', '/password/reset');
         }
 
-        $ip = $this->resolveClientIp($request);
+        try {
+            $ip = ClientIpResolver::resolve($request);
+        } catch (\RuntimeException $e) {
+            Flash::add('error', 'クライアントIPアドレスを特定できませんでした。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/password/reset');
+        }
         // global rate limit per IP
         $globalKey = "pwd_reset_ip:{$ip}";
-        if (!\Attendly\Support\RateLimiter::allow($globalKey, 20, 60 * 5)) { // 20 per 5 minutes
+        if (!RateLimiter::allow($globalKey, 20, 60 * 5)) { // 20 per 5 minutes
             Flash::add('error', 'しばらく待ってから再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/password/reset');
         }
@@ -57,30 +66,29 @@ final class PasswordResetController
             return $response->withStatus(303)->withHeader('Location', '/password/reset');
         }
 
-        // per-email rate limit
-        $emailKey = "pwd_reset_email:{$emailLower}";
-        if (!\Attendly\Support\RateLimiter::allow($emailKey, 5, 60 * 5)) { // 5 per 5 minutes per email
+        // per IP + email limit to avoid targeted email DoS while keeping enumeration resistance
+        $ipEmailKey = "pwd_reset_ip_email:{$ip}:{$emailLower}";
+        if (!RateLimiter::allow($ipEmailKey, 3, 60 * 5)) { // 3 per 5 minutes per IP/email
             Flash::add('error', 'しばらく待ってから再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/password/reset');
         }
 
-        Flash::add('info', 'パスワードリセットはまだ移行中です。後続実装でメール送信を追加します。');
+        try {
+            $result = $this->getResetService()->requestReset($emailLower);
+        } catch (\Throwable $e) {
+            Flash::add('error', 'リセット処理中にエラーが発生しました。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/password/reset');
+        }
+
+        Flash::add('info', 'パスワードリセット手順をメールに送信しました。届かない場合は時間をおいて再度お試しください。');
         return $response->withStatus(303)->withHeader('Location', '/password/reset');
     }
 
-    private function resolveClientIp(ServerRequestInterface $request): string
+    private function getResetService(): PasswordResetService
     {
-        $server = $request->getServerParams();
-        $trusted = filter_var($_ENV['TRUST_PROXY'], FILTER_VALIDATE_BOOL);
-        if ($trusted && !empty($server['HTTP_X_FORWARDED_FOR'])) {
-            $parts = array_map('trim', explode(',', (string)$server['HTTP_X_FORWARDED_FOR']));
-            if (!empty($parts[0])) {
-                return $parts[0];
-            }
+        if ($this->resetService === null) {
+            $this->resetService = new PasswordResetService();
         }
-        if (!empty($server['REMOTE_ADDR'])) {
-            return $server['REMOTE_ADDR'];
-        }
-        throw new \RuntimeException('Unable to resolve client IP address');
+        return $this->resetService;
     }
 }

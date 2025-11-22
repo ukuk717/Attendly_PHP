@@ -41,6 +41,7 @@ final class RegisterController
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'roleCodeValue' => $roleCode,
             'minPasswordLength' => $this->minPasswordLength,
         ]);

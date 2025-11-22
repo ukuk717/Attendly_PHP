@@ -6,8 +6,8 @@ namespace Attendly\Support;
 
 /**
  * Lightweight rate limiter.
- * - APCu を利用する場合はウィンドウ開始時刻とカウンタを CAS で更新し、リセットのレースを抑制。
- * - APCu が使えない場合は単一プロセスのみ有効な静的ストアにフォールバック。
+ * - APCu を利用する場合はウィンドウ開始時刻とカウンタを分離し、カウンタは atomic increment で更新。
+ * - APCu が使えない場合は「単一プロセスでのみ有効」な静的ストアにフォールバック（PHP-FPM マルチワーカーでは効きません）。
  * - 高並列/複数ワーカー環境で厳密な制限が必要な場合は Redis/Memcached などの共有ストアを使用してください。
  */
 final class RateLimiter
@@ -39,7 +39,7 @@ final class RateLimiter
 
                 $windowStart = (int)$state['window'];
                 $count = (int)$state['count'];
-                if (($now - $windowStart) > $windowSeconds) {
+                if (($now - $windowStart) >= $windowSeconds) {
                     $newState = ['window' => $now, 'count' => 1];
                 } else {
                     if ($count >= $maxAttempts) {
@@ -53,7 +53,6 @@ final class RateLimiter
                     return true;
                 }
             }
-            // CAS が衝突し続けた場合は保守的に拒否
             return false;
         }
 

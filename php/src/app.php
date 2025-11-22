@@ -64,7 +64,11 @@ function create_app(): \Slim\App
         return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
     };
 
-    $app->get('/', $statusHandler);
+    $app->get('/', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        $user = $request->getAttribute('currentUser');
+        $target = !empty($user) ? '/dashboard' : '/login';
+        return $response->withStatus(303)->withHeader('Location', $target);
+    });
     $app->get('/status', $statusHandler);
 
     $app->get('/web', function (ServerRequestInterface $request, ResponseInterface $response) use ($view): ResponseInterface {
@@ -156,13 +160,76 @@ function create_app(): \Slim\App
 
     // Static: styles.css (for built-in server/slim routing)
     $app->get('/styles.css', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
-        $path = dirname(__DIR__) . '/public/styles.css';
-        if (!is_file($path)) {
-            return $response->withStatus(404);
+        $candidates = [
+            dirname(__DIR__) . '/public/styles.css',         // php/public
+            dirname(__DIR__, 2) . '/public/styles.css',      // repo root public
+        ];
+        $path = null;
+        foreach ($candidates as $candidate) {
+            if (is_file($candidate)) {
+                $path = $candidate;
+                break;
+            }
+        }
+        if ($path === null) {
+            return $response->withStatus(404)->withHeader('Content-Type', 'text/plain; charset=utf-8');
         }
         $response->getBody()->write((string)file_get_contents($path));
         return $response
             ->withHeader('Content-Type', 'text/css; charset=utf-8')
+            ->withHeader('Cache-Control', 'public, max-age=300');
+    });
+
+    // Static assets fallback for common types (css/js/png/jpg/svg/ico)
+    $app->get('/{path:.*\\.(?:css|js|png|jpg|jpeg|gif|svg|ico)}', function (ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface {
+        $relative = ltrim($args['path'] ?? '', '/');
+        if (str_contains($relative, '..')) {
+            return $response->withStatus(404)->withHeader('Content-Type', 'text/plain; charset=utf-8');
+        }
+        $candidates = [
+            dirname(__DIR__) . '/public/' . $relative,        // php/public
+            dirname(__DIR__, 2) . '/public/' . $relative,     // repo root public
+        ];
+        $path = null;
+        foreach ($candidates as $candidate) {
+            $realPath = realpath($candidate);
+            $allowedBases = [
+                realpath(dirname(__DIR__) . '/public'),
+                realpath(dirname(__DIR__, 2) . '/public'),
+            ];
+            $isAllowed = false;
+            foreach ($allowedBases as $base) {
+                if ($base !== false && $realPath !== false && str_starts_with($realPath, $base . DIRECTORY_SEPARATOR)) {
+                    $isAllowed = true;
+                    break;
+                }
+            }
+            if ($isAllowed && $realPath !== false && is_file($realPath)) {
+                $path = $realPath;
+                break;
+            }
+        }
+        if ($path === null) {
+            return $response->withStatus(404)->withHeader('Content-Type', 'text/plain; charset=utf-8');
+        }
+        $mime = 'text/plain';
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $mimeMap = [
+            'css' => 'text/css',
+            'js' => 'application/javascript',
+            'png' => 'image/png',
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'gif' => 'image/gif',
+            'svg' => 'image/svg+xml',
+            'ico' => 'image/x-icon',
+        ];
+        if (isset($mimeMap[$ext])) {
+            $mime = $mimeMap[$ext];
+        }
+        $response->getBody()->write((string)file_get_contents($path));
+        return $response
+            ->withHeader('Content-Type', $mime)
             ->withHeader('Cache-Control', 'public, max-age=300');
     });
 
