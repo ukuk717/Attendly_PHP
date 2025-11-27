@@ -39,15 +39,19 @@ final class AuthController
     public function login(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         $data = (array)$request->getParsedBody();
-        $email = trim((string)($data['email'] ?? ''));
+        $email = strtolower(trim((string)($data['email'] ?? '')));
         $password = (string)($data['password'] ?? '');
 
-        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        if ($email === '' || mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             Flash::add('error', '有効なメールアドレスを入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
         if ($password === '') {
             Flash::add('error', 'パスワードを入力してください。');
+            return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        if (mb_strlen($password, 'UTF-8') > 128) {
+            Flash::add('error', 'パスワードが長すぎます。128文字以内で入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
 

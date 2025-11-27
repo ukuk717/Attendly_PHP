@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Attendly\Controllers;
 
 use Attendly\Security\CsrfToken;
+use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
 use Attendly\Support\PasswordPolicy;
 use Attendly\Support\SessionAuth;
+use Attendly\Support\RateLimiter;
 use Attendly\Services\PasswordResetService;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
@@ -64,6 +66,25 @@ final class PasswordResetUpdateController
         }
         $data = (array)$request->getParsedBody();
         $password = (string)($data['password'] ?? '');
+
+        try {
+            $ip = ClientIpResolver::resolve($request);
+        } catch (\RuntimeException $e) {
+            Flash::add('error', 'クライアントIPアドレスを特定できませんでした。時間をおいて再度お試しください。');
+            $safeLocation = '/password/reset/' . rawurlencode($token);
+            return $response->withStatus(303)->withHeader('Location', $safeLocation);
+        }
+        $rateToken = hash('sha256', $token);
+        if (!RateLimiter::allow("pwd_reset_update_ip:{$ip}", 50, 300)) {
+            Flash::add('error', '試行回数が多すぎます。しばらく待ってから再度お試しください。');
+            $safeLocation = '/password/reset/' . rawurlencode($token);
+            return $response->withStatus(303)->withHeader('Retry-After', '300')->withHeader('Location', $safeLocation);
+        }
+        if (!RateLimiter::allow("pwd_reset_update:{$ip}:{$rateToken}", 10, 300)) {
+            Flash::add('error', '試行回数が多すぎます。しばらく待ってから再度お試しください。');
+            $safeLocation = '/password/reset/' . rawurlencode($token);
+            return $response->withStatus(303)->withHeader('Retry-After', '300')->withHeader('Location', $safeLocation);
+        }
 
         $result = $this->policy->validate($password);
         if (!$result['ok']) {

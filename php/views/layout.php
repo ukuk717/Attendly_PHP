@@ -3,32 +3,45 @@
 <head>
   <?php
     $brand = $brandName ?? ($_ENV['APP_BRAND_NAME'] ?? 'Attendly');
+    if (empty($csrf)) {
+        throw new \RuntimeException('CSRF token is required for authenticated layout');
+    }
+    $csrfToken = $csrf;
+    $isAuthed = !empty($currentUser);
   ?>
   <?php include __DIR__ . '/_partials/head.php'; ?>
 </head>
 <body>
   <header class="app-header">
     <div class="app-header__brand">
-      <?php $homeLink = !empty($currentUser) ? '/dashboard' : '/login'; ?>
-      <h1 class="app-header__title"><a href="<?= $e($homeLink) ?>" class="app-header__home-link"><?= $e($brand) ?></a></h1>
+      <?php $homeLink = $isAuthed ? '/dashboard' : '/login'; ?>
+      <h1 class="app-header__title">
+        <a href="<?= $e($homeLink) ?>" class="app-header__home-link"><?= $e($brand) ?></a>
+      </h1>
     </div>
-    <nav class="app-header__nav">
-      <a href="/web">Home</a>
-      <a href="/dashboard">Dashboard</a>
-      <a href="/web/form">Form Sample</a>
-      <a href="/register">Register</a>
-    </nav>
-    <div class="app-header__actions">
-      <?php if (!empty($currentUser)): ?>
-        <span class="app-header__user"><?= $e($currentUser['email'] ?? '') ?></span>
-        <form id="logout-form" method="post" action="/logout" style="display:inline;">
-          <input type="hidden" name="csrf_token" value="<?= $e($csrf ?? '') ?>">
-          <button type="submit" class="btn">ログアウト</button>
+    <button class="menu-toggle" type="button" aria-label="メニューを開く" aria-expanded="false" aria-controls="primary-nav">
+      <span class="menu-toggle__bar"></span>
+      <span class="menu-toggle__bar"></span>
+      <span class="menu-toggle__bar"></span>
+    </button>
+    <nav class="app-header__nav" id="primary-nav">
+      <a href="/web" class="nav-link">ホーム</a>
+      <?php if ($isAuthed): ?>
+        <a href="/dashboard" class="nav-link">ダッシュボード</a>
+      <?php endif; ?>
+      <a href="/web/form" class="nav-link">CSRF/Flash サンプル</a>
+      <a href="/register" class="nav-link">従業員登録</a>
+      <a href="/password/reset" class="nav-link">パスワードリセット</a>
+      <?php if ($isAuthed): ?>
+        <span class="nav-user"><?= $e($currentUser['email'] ?? '') ?></span>
+        <form id="logout-form" method="post" action="/logout" class="nav-form">
+          <input type="hidden" name="csrf_token" value="<?= $e($csrfToken) ?>">
+          <button type="submit" class="btn secondary">ログアウト</button>
         </form>
       <?php else: ?>
-        <a href="/login" class="btn">ログイン</a>
+        <a href="/login" class="btn primary">ログイン</a>
       <?php endif; ?>
-    </div>
+    </nav>
   </header>
 
   <main class="container">
@@ -47,5 +60,6 @@
 
     <?= $content ?>
   </main>
+  <script src="/header.js" defer></script>
 </body>
 </html>

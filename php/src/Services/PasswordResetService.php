@@ -166,16 +166,18 @@ final class PasswordResetService
         $mailer = $this->getMailer();
         $baseUrl = rtrim((string)($_ENV['APP_BASE_URL'] ?? ''), '/');
         $resetUrl = $baseUrl !== '' ? "{$baseUrl}/password/reset/{$token}" : "/password/reset/{$token}";
+        $brand = $_ENV['APP_BRAND_NAME'] ?? 'Attendly';
+        $subject = "【{$brand}】パスワード再設定のご案内";
         $body = <<<TXT
-パスワード再設定のご案内
+{$brand} へのログインで利用しているアカウントについて、パスワード再設定のリクエストを受け付けました。
 
-以下のリンクからパスワードを再設定してください。
+以下のリンクを開き、新しいパスワードを設定してください。
 {$resetUrl}
 
-有効期限: {$expiresAt->format('Y-m-d H:i:s T')}
-心当たりがない場合はこのメールを無視してください。
+有効期限: {$expiresAt->setTimezone(new DateTimeZone($_ENV['APP_TIMEZONE'] ?? 'Asia/Tokyo'))->format('Y-m-d H:i:s T')}
+※このメールに心当たりがない場合はリンクを開かず破棄してください。
 TXT;
-        $mailer->send($email, 'パスワード再設定のご案内', $body);
+        $mailer->send($email, $subject, $body);
     }
 
     private function getMailer(): Mailer

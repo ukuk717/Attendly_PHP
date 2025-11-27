@@ -1,13 +1,16 @@
 :root {
   color-scheme: light;
-  --primary: #0066cc;
-  --primary-light: #e6f2ff;
-  --danger: #cc3300;
-  --success: #007a3d;
-  --border: #d9d9d9;
-  --text: #222222;
-  --background: #f7f7f7;
-  font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
+  --primary: #0f6ad8;
+  --primary-light: #e5f0ff;
+  --danger: #c1321a;
+  --success: #0c7a43;
+  --border: #d4d9e1;
+  --text: #1f2a3d;
+  --background: linear-gradient(180deg, #f8fbff 0%, #f2f5fa 100%);
+  --card: #ffffff;
+  --shadow: 0 10px 30px rgba(23, 61, 102, 0.08);
+  --font-family: 'Noto Sans JP', 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-family);
 }
 
 * {
@@ -18,6 +21,7 @@ body {
   margin: 0;
   background: var(--background);
   color: var(--text);
+  min-height: 100vh;
 }
 
 body.menu-open {
@@ -176,11 +180,11 @@ body.menu-open {
 }
 
 .card {
-  background: #ffffff;
-  border-radius: 12px;
+  background: var(--card);
+  border-radius: 14px;
   border: 1px solid var(--border);
   padding: 1.5rem;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow);
 }
 
 .card h2 {
@@ -248,12 +252,12 @@ body.menu-open {
 .btn {
   border: none;
   border-radius: 24px;
-  padding: 0.65rem 1.4rem;
+  padding: 0.7rem 1.5rem;
   font-size: 1rem;
   cursor: pointer;
   background: var(--border);
   color: var(--text);
-  transition: filter 0.2s ease;
+  transition: filter 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -291,12 +295,15 @@ body.menu-open {
 
 .btn:hover {
   filter: brightness(1.05);
+  box-shadow: 0 6px 14px rgba(15, 106, 216, 0.18);
+  transform: translateY(-1px);
 }
 
 .flash {
   border-radius: 8px;
   padding: 0.75rem 1rem;
   font-weight: 600;
+  box-shadow: var(--shadow);
 }
 
 .flash.success {
@@ -447,8 +454,18 @@ body.menu-open {
 }
 
 .auth-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  margin: 0 auto;
   max-width: 520px;
   align-items: stretch;
+}
+
+.auth-card {
+  padding: 1.75rem;
+  border-radius: 16px;
 }
 
 .form-note {
