@@ -8,6 +8,8 @@
 - Please exercise extreme caution to prevent security risks and implement solutions that do not conflict with known issues.
 - Writing code with even the slightest problem is strictly prohibited.
 - In principle, the execution of Python code is prohibited. If there is anything that can only be executed using Python, be sure to confirm with the user the reason. The arbitrary execution of Python code is prohibited.
+- If there are any items listed in the `needs fix` section of `issues.md` that have not been marked as fixed, you must review and implement the necessary fixes.
+- If you decide not to implement any of these items based on your own judgment, you must present me with a reason that I find acceptable. Implementing changes without permission is not permitted.
 ## Critical Test Warning
 - Do not run `npm test`, `npm run test`, `npx jest`, or `yarn test`.
 - Running the Jest suite currently hangs indefinitely and freezes the session (observed on 2025-10-21). Treat tests as unavailable until this note is removed.

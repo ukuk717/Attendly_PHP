@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Attendly\Controllers;
 
 use Attendly\Security\CsrfToken;
+use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\Support\SessionAuth;
 use Attendly\View;
@@ -109,7 +110,7 @@ final class RegisterController
             return $response->withStatus(303)->withHeader('Location', '/register');
         }
 
-        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $now = AppTime::now();
         if ($roleCodeRow['is_disabled']) {
             Flash::add('error', 'このロールコードは無効化されています。管理者へお問い合わせください。');
             return $response->withStatus(303)->withHeader('Location', '/register');

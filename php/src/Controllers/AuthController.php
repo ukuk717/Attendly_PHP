@@ -70,6 +70,8 @@ final class AuthController
             SessionAuth::setUser([
                 'id' => $result['user']['id'],
                 'email' => $result['user']['email'],
+                'role' => $result['user']['role'] ?? null,
+                'tenant_id' => $result['user']['tenant_id'] ?? null,
             ]);
             Flash::add('success', 'ログインしました。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');

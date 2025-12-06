@@ -28,6 +28,7 @@ final class Mailer
     private ?string $encryption;
     private int $timeout;
     private string $sendmailPath;
+    private ?string $authType;
 
     public function __construct(?string $fromAddress = null, ?string $fromName = null)
     {
@@ -54,6 +55,9 @@ final class Mailer
         $this->encryption = in_array($encryption, ['tls', 'ssl'], true) ? $encryption : null;
         $this->timeout = max(5, (int)($_ENV['MAIL_TIMEOUT'] ?? 15));
         $this->sendmailPath = trim((string)($_ENV['MAIL_SENDMAIL_PATH'] ?? '/usr/sbin/sendmail -t -i'));
+        $rawAuthType = strtolower((string)($_ENV['MAIL_AUTH_TYPE'] ?? ''));
+        $allowedAuth = ['login', 'plain', 'cram-md5'];
+        $this->authType = in_array($rawAuthType, $allowedAuth, true) ? $rawAuthType : null;
     }
 
     /**
@@ -131,9 +135,20 @@ final class Mailer
             if ($mailer->SMTPAuth) {
                 $mailer->Username = (string)$this->username;
                 $mailer->Password = (string)$this->password;
+                // OAuth 認証は利用せず、許可された機構のみ選択
+                if ($this->authType !== null) {
+                    $mailer->AuthType = strtoupper($this->authType);
+                } else {
+                    $mailer->AuthType = 'LOGIN';
+                }
             }
             if ($this->encryption !== null) {
-                $mailer->SMTPSecure = $this->encryption;
+                $mailer->SMTPSecure = $this->encryption === 'ssl'
+                    ? PHPMailer::ENCRYPTION_SMTPS
+                    : PHPMailer::ENCRYPTION_STARTTLS;
+            } elseif ($mailer->Port === 465) {
+                // smtps:// の既定ポートでは暗黙 TLS を強制
+                $mailer->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
             }
         } elseif ($this->transport === 'sendmail') {
             $mailer->isSendmail();
@@ -166,6 +181,8 @@ final class Mailer
             $mailer->send();
         } catch (MailException $e) {
             throw new RuntimeException('PHPMailer 送信エラー: ' . $e->getMessage(), 0, $e);
+        } finally {
+            $this->scrubSensitiveMailerState($mailer);
         }
     }
 
@@ -211,5 +228,16 @@ final class Mailer
         }
         $backup = $this->logPath . '.bak';
         @rename($this->logPath, $backup);
+    }
+
+    private function scrubSensitiveMailerState(PHPMailer $mailer): void
+    {
+        // 認証情報がダンプや例外で漏れないよう、送信後に破棄する
+        if (property_exists($mailer, 'Password')) {
+            $mailer->Password = null;
+        }
+        if (property_exists($mailer, 'AuthType')) {
+            $mailer->AuthType = '';
+        }
     }
 }

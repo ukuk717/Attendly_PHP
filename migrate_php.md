@@ -70,6 +70,7 @@
 
 8) 環境変数/設定  
    - phpdotenv 等で `.env` を読み込む。主要項目: `APP_BASE_URL`, `APP_TIMEZONE`, `ALLOWED_HOSTS`, `DB_*`, `SESSION_SECRET`, `SESSION_TTL_SECONDS`, `DATA_RETENTION_YEARS`, `MFA_RESET_LOG_ENCRYPTION_KEY` 等。  
+   - メール送信: `MAIL_TRANSPORT=log|mail|sendmail|smtp`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_ENCRYPTION`（`tls`=STARTTLS / `ssl`=SMTPS:465）、`MAIL_AUTH_TYPE`（`login|plain|cram-md5` のみ。XOAUTH2 は利用しない）を設定。  
    - モジュール版では php.ini 固定を前提に、`ini_set`/HTTP ヘッダで補うべき設定（cookie params, cache headers 等）を明文化。
 
 9) テストとリハーサル  

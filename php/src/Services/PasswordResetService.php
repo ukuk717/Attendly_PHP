@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Attendly\Services;
 
 use Attendly\Database\Repository;
+use Attendly\Support\AppTime;
 use Attendly\Support\RateLimiter;
 use Attendly\Support\Mailer;
 use DateTimeImmutable;
-use DateTimeZone;
 
 final class PasswordResetService
 {
@@ -38,7 +38,7 @@ final class PasswordResetService
 
         $token = bin2hex(random_bytes(32)); // 64 chars, URL-safe
         $tokenHash = hash('sha256', $token);
-        $expiresAt = new DateTimeImmutable('+15 minutes', new DateTimeZone('UTC'));
+        $expiresAt = AppTime::now()->add(new \DateInterval('PT15M'));
 
         $this->repository->createPasswordResetToken((int)$user['id'], $tokenHash, $expiresAt);
 
@@ -61,7 +61,7 @@ final class PasswordResetService
     {
         $tokenHash = hash('sha256', $token);
         $pdo = $this->repository->getPdo();
-        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $now = AppTime::now();
 
         $stmt = $pdo->prepare(
             'SELECT pr.id, pr.user_id, pr.expires_at, pr.used_at, u.status
@@ -78,7 +78,7 @@ final class PasswordResetService
         if ($row['used_at'] !== null) {
             return ['ok' => false, 'reason' => 'used'];
         }
-        $expiresAt = new DateTimeImmutable((string)$row['expires_at'], new DateTimeZone('UTC'));
+        $expiresAt = AppTime::fromStorage((string)$row['expires_at']) ?? $now;
         if ($expiresAt <= $now) {
             return ['ok' => false, 'reason' => 'expired'];
         }
@@ -99,7 +99,7 @@ final class PasswordResetService
     {
         $pdo = $this->repository->getPdo();
         $tokenHash = hash('sha256', $token);
-        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $now = AppTime::now();
 
         $pdo->beginTransaction();
         try {
@@ -151,7 +151,7 @@ final class PasswordResetService
         $tokenHash = hash('sha256', $token);
         $line = sprintf(
             "[%s] password reset for %s token_hash=%s expires=%s\n",
-            (new DateTimeImmutable('now', new DateTimeZone('UTC')))->format(DateTimeImmutable::ATOM),
+            AppTime::now()->format(DateTimeImmutable::ATOM),
             $email,
             substr($tokenHash, 0, 16),
             $expiresAt->format(DateTimeImmutable::ATOM)
@@ -174,7 +174,7 @@ final class PasswordResetService
 以下のリンクを開き、新しいパスワードを設定してください。
 {$resetUrl}
 
-有効期限: {$expiresAt->setTimezone(new DateTimeZone($_ENV['APP_TIMEZONE'] ?? 'Asia/Tokyo'))->format('Y-m-d H:i:s T')}
+有効期限: {$expiresAt->setTimezone(AppTime::timezone())->format('Y-m-d H:i:s T')}
 ※このメールに心当たりがない場合はリンクを開かず破棄してください。
 TXT;
         $mailer->send($email, $subject, $body);

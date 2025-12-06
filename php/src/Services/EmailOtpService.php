@@ -6,9 +6,9 @@ namespace Attendly\Services;
 
 use Attendly\Database\Repository;
 use Attendly\Support\Mailer;
+use Attendly\Support\AppTime;
 use DateInterval;
 use DateTimeImmutable;
-use DateTimeZone;
 
 final class EmailOtpService
 {
@@ -38,8 +38,7 @@ final class EmailOtpService
         if ($targetEmail === '') {
             throw new \InvalidArgumentException('無効なメールアドレスです。');
         }
-        $expiresAt = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-        $expiresAt = $expiresAt->add(new DateInterval('PT' . $this->ttlSeconds . 'S'));
+        $expiresAt = AppTime::now()->add(new DateInterval('PT' . $this->ttlSeconds . 'S'));
         $code = $this->generateCode();
         $codeHash = hash('sha256', $code);
 
@@ -57,7 +56,7 @@ final class EmailOtpService
                 'failed_attempts' => 0,
                 'max_attempts' => $this->maxAttempts,
                 'lock_until' => null,
-                'last_sent_at' => new DateTimeImmutable('now', new DateTimeZone('UTC')),
+                'last_sent_at' => AppTime::now(),
             ]);
         } else {
             $challenge = $this->repository->createEmailOtpRequest([
@@ -95,12 +94,12 @@ final class EmailOtpService
             'purpose' => $purpose,
             'target_email' => $targetEmail,
             'only_active' => true,
-            'active_at' => new DateTimeImmutable('now', new DateTimeZone('UTC')),
+            'active_at' => AppTime::now(),
         ]);
         if ($challenge === null) {
             return ['ok' => false, 'reason' => 'not_found'];
         }
-        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $now = AppTime::now();
         if ($challenge['lock_until'] !== null && $challenge['lock_until'] > $now) {
             return ['ok' => false, 'reason' => 'locked', 'retry_at' => $challenge['lock_until']];
         }
@@ -139,7 +138,7 @@ final class EmailOtpService
 {$brand} への登録を完了するには、以下の確認コードを入力してください。
 
 確認コード: {$code}
-有効期限: {$expiresAt->setTimezone(new DateTimeZone('Asia/Tokyo'))->format('Y-m-d H:i:s T')}
+有効期限: {$expiresAt->setTimezone(AppTime::timezone())->format('Y-m-d H:i:s T')}
 
 このメールに心当たりがない場合は破棄してください。
 TXT;

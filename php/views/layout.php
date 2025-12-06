@@ -8,6 +8,7 @@
     }
     $csrfToken = $csrf;
     $isAuthed = !empty($currentUser);
+    $isAdmin = $isAuthed && (($currentUser['role'] ?? '') === 'admin' || ($currentUser['role'] ?? '') === 'tenant_admin');
   ?>
   <?php include __DIR__ . '/_partials/head.php'; ?>
 </head>
@@ -28,17 +29,21 @@
       <a href="/web" class="nav-link">ホーム</a>
       <?php if ($isAuthed): ?>
         <a href="/dashboard" class="nav-link">ダッシュボード</a>
-      <?php endif; ?>
-      <a href="/web/form" class="nav-link">CSRF/Flash サンプル</a>
-      <a href="/register" class="nav-link">従業員登録</a>
-      <a href="/password/reset" class="nav-link">パスワードリセット</a>
-      <?php if ($isAuthed): ?>
+        <?php if ($isAdmin): ?>
+          <a href="/admin/role-codes" class="nav-link">ロールコード管理</a>
+          <a href="/admin/timesheets/export" class="nav-link">勤怠エクスポート</a>
+          <a href="/admin/payslips/send" class="nav-link">給与明細送信</a>
+        <?php else: ?>
+          <a href="/payrolls" class="nav-link">給与明細</a>
+        <?php endif; ?>
         <span class="nav-user"><?= $e($currentUser['email'] ?? '') ?></span>
         <form id="logout-form" method="post" action="/logout" class="nav-form">
           <input type="hidden" name="csrf_token" value="<?= $e($csrfToken) ?>">
           <button type="submit" class="btn secondary">ログアウト</button>
         </form>
       <?php else: ?>
+        <a href="/register" class="nav-link">従業員登録</a>
+        <a href="/password/reset" class="nav-link">パスワードリセット</a>
         <a href="/login" class="btn primary">ログイン</a>
       <?php endif; ?>
     </nav>

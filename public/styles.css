@@ -355,6 +355,37 @@ body.menu-open {
   color: var(--primary);
 }
 
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.metric {
+  padding: 0.25rem 0;
+}
+
+.metric-label {
+  margin: 0 0 0.35rem;
+  color: #5b6675;
+  font-size: 0.95rem;
+}
+
+.metric-value {
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 700;
+}
+
+.highlight-card {
+  background: var(--primary-light);
+  border-left: 4px solid var(--primary);
+}
+
+.status-row {
+  margin: 0 0 0.5rem;
+}
+
 .highlight-sm {
   font-weight: 600;
   color: var(--primary);
@@ -498,10 +529,6 @@ body.menu-open {
 
 .form-field-inline label {
   flex: 1 1 160px;
-}
-
-.highlight-card {
-  border-left: 4px solid var(--primary);
 }
 
 .definition-list {

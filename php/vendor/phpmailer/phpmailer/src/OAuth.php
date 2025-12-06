@@ -24,6 +24,7 @@ namespace PHPMailer\PHPMailer;
 use League\OAuth2\Client\Grant\RefreshToken;
 use League\OAuth2\Client\Provider\AbstractProvider;
 use League\OAuth2\Client\Token\AccessToken;
+use PHPMailer\PHPMailer\Exception;
 
 /**
  * OAuth - OAuth2 authentication wrapper class.
@@ -86,11 +87,19 @@ class OAuth implements OAuthTokenProvider
      */
     public function __construct($options)
     {
+        foreach (['provider', 'userName', 'clientSecret', 'clientId', 'refreshToken'] as $key) {
+            if (!array_key_exists($key, $options)) {
+                throw new Exception("OAuth option missing: {$key}");
+            }
+        }
+        if (!$options['provider'] instanceof AbstractProvider) {
+            throw new Exception('OAuth provider must implement AbstractProvider');
+        }
         $this->provider = $options['provider'];
-        $this->oauthUserEmail = $options['userName'];
-        $this->oauthClientSecret = $options['clientSecret'];
-        $this->oauthClientId = $options['clientId'];
-        $this->oauthRefreshToken = $options['refreshToken'];
+        $this->oauthUserEmail = (string) $options['userName'];
+        $this->oauthClientSecret = (string) $options['clientSecret'];
+        $this->oauthClientId = (string) $options['clientId'];
+        $this->oauthRefreshToken = (string) $options['refreshToken'];
     }
 
     /**
@@ -110,10 +119,14 @@ class OAuth implements OAuthTokenProvider
      */
     protected function getToken()
     {
-        return $this->provider->getAccessToken(
-            $this->getGrant(),
-            ['refresh_token' => $this->oauthRefreshToken]
-        );
+        try {
+            return $this->provider->getAccessToken(
+                $this->getGrant(),
+                ['refresh_token' => $this->oauthRefreshToken]
+            );
+        } catch (\Throwable $e) {
+            throw new Exception('OAuth token retrieval failed', 0, $e);
+        }
     }
 
     /**
@@ -135,5 +148,21 @@ class OAuth implements OAuthTokenProvider
             $this->oauthToken .
             "\001\001"
         );
+    }
+
+    /**
+     * Hide sensitive credentials from debug output.
+     *
+     * @return array
+     */
+    public function __debugInfo()
+    {
+        return [
+            'provider' => is_object($this->provider) ? get_class($this->provider) : null,
+            'oauthUserEmail' => $this->oauthUserEmail,
+            'hasClientId' => $this->oauthClientId !== '',
+            'hasClientSecret' => $this->oauthClientSecret !== '',
+            'hasRefreshToken' => $this->oauthRefreshToken !== '',
+        ];
     }
 }

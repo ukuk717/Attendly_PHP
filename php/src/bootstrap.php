@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 use Attendly\Database;
+use Attendly\Support\AppTime;
 use Dotenv\Dotenv;
 
-const APP_DEFAULT_TIMEZONE = 'Asia/Tokyo';
 const APP_DEFAULT_SESSION_TTL = 60 * 60 * 6; // 6 hours
 
 /**
@@ -28,7 +28,7 @@ function attendly_load_env(string $projectRoot): void
  */
 function attendly_bootstrap_runtime(): void
 {
-    date_default_timezone_set($_ENV['APP_TIMEZONE'] ?? APP_DEFAULT_TIMEZONE);
+    date_default_timezone_set(AppTime::timezone()->getName());
 
     $lifetime = (int)($_ENV['SESSION_TTL_SECONDS'] ?? APP_DEFAULT_SESSION_TTL);
     $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
@@ -72,7 +72,7 @@ function attendly_handle_request(): void
             'app' => 'Attendly PHP skeleton',
             'env' => $_ENV['APP_ENV'] ?? 'local',
             'timezone' => date_default_timezone_get(),
-            'timestamp' => (new DateTimeImmutable())->format(DateTimeInterface::ATOM),
+            'timestamp' => AppTime::now()->format(DateTimeInterface::ATOM),
             'db' => $dbStatus,
         ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         return;

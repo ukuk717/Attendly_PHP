@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Attendly;
 
-use DateTimeImmutable;
 use DateTimeInterface;
 use Slim\Factory\AppFactory;
 use Psr\Http\Message\ResponseInterface;
@@ -15,12 +14,20 @@ use Attendly\Support\Flash;
 use Attendly\Security\HostValidationMiddleware;
 use Attendly\Security\SecurityHeadersMiddleware;
 use Attendly\Controllers\AuthController;
+use Attendly\Security\RequireAdminMiddleware;
 use Attendly\Security\RequireAuthMiddleware;
 use Attendly\Middleware\CurrentUserMiddleware;
 use Attendly\Controllers\RegisterController;
 use Attendly\Controllers\PasswordResetController;
 use Attendly\Controllers\PasswordResetUpdateController;
 use Attendly\Controllers\RegisterVerifyController;
+use Attendly\Controllers\RoleCodeController;
+use Attendly\Controllers\TimesheetExportController;
+use Attendly\Controllers\PayslipController;
+use Attendly\Controllers\DashboardController;
+use Attendly\Controllers\PayrollViewerController;
+use Attendly\Controllers\WorkSessionController;
+use Attendly\Support\AppTime;
 
 function create_app(): \Slim\App
 {
@@ -56,8 +63,8 @@ function create_app(): \Slim\App
             'app' => 'Attendly PHP skeleton',
             'env' => $_ENV['APP_ENV'] ?? 'local',
             'php' => PHP_VERSION,
-            'timezone' => date_default_timezone_get(),
-            'timestamp' => (new DateTimeImmutable())->format(DateTimeInterface::ATOM),
+            'timezone' => AppTime::timezone()->getName(),
+            'timestamp' => AppTime::now()->format(DateTimeInterface::ATOM),
             'db' => \attendly_status_database(),
         ];
         $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
@@ -136,18 +143,35 @@ function create_app(): \Slim\App
     $app->post('/register/verify', [$registerVerify, 'verify']);
     $app->post('/register/verify/resend', [$registerVerify, 'resend']);
     $app->post('/register/verify/cancel', [$registerVerify, 'cancel']);
+    $dashboard = new DashboardController($view);
+    $workSessions = new WorkSessionController();
+    $payrollViewer = new PayrollViewerController($view);
 
-    $app->get('/dashboard', function (ServerRequestInterface $request, ResponseInterface $response) use ($view): ResponseInterface {
-        $flashes = Flash::consume();
-        $html = $view->renderWithLayout('dashboard', [
-            'title' => 'ダッシュボード',
-            'csrf' => CsrfToken::getToken(),
-            'flashes' => $flashes,
-            'currentUser' => $request->getAttribute('currentUser'),
-        ]);
-        $response->getBody()->write($html);
-        return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
-    })->add(new RequireAuthMiddleware());
+    // Role code management (admin)
+    $roleCodeController = new RoleCodeController($view);
+    $app->get('/role-codes', [$roleCodeController, 'list'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/role-codes', [$roleCodeController, 'create'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/role-codes/{id}/disable', [$roleCodeController, 'disable'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/admin/role-codes', [$roleCodeController, 'showPage'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/role-codes', [$roleCodeController, 'createFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/role-codes/{id}/disable', [$roleCodeController, 'disableFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    // Timesheet export (admin)
+    $timesheetExport = new TimesheetExportController($view);
+    $app->post('/timesheets/export', [$timesheetExport, 'export'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/admin/timesheets/export', [$timesheetExport, 'showForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/timesheets/export', [$timesheetExport, 'exportFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    // Payslip send (admin)
+    $payslipController = new PayslipController($view);
+    $app->post('/payslips/send', [$payslipController, 'send'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/admin/payslips/send', [$payslipController, 'showForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/payslips/send', [$payslipController, 'sendFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    $app->get('/dashboard', [$dashboard, 'show'])->add(new RequireAuthMiddleware());
+    $app->post('/work-sessions/punch', [$workSessions, 'toggle'])->add(new RequireAuthMiddleware());
+    $app->get('/payrolls', [$payrollViewer, 'index'])->add(new RequireAuthMiddleware());
+    $app->get('/payrolls/{id}/download', [$payrollViewer, 'download'])->add(new RequireAuthMiddleware());
 
     $app->get('/whoami', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
         $user = $request->getAttribute('currentUser');

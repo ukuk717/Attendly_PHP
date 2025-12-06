@@ -15,7 +15,7 @@ final class AuthService
     /**
      * 認証を行い、成功時はユーザー情報を返却する。
      *
-     * @return array{user: array{id:int,email:string,must_change_password:bool,status:?string}|null, error:?string}
+     * @return array{user: array{id:int,email:string,role:string,tenant_id:?int,must_change_password:bool,status:?string}|null, error:?string}
      */
     public function authenticate(string $email, string $password): array
     {
@@ -39,6 +39,8 @@ final class AuthService
             'user' => [
                 'id' => $user['id'],
                 'email' => $user['email'],
+                'role' => $user['role'],
+                'tenant_id' => $user['tenant_id'],
                 'must_change_password' => (bool)$user['must_change_password'],
                 'status' => $user['status'],
             ],
