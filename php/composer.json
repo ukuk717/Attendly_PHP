@@ -27,6 +27,6 @@
     ]
   },
   "scripts-descriptions": {
-    "cleanup-phpmailer-oauth-helper": "Remove PHPMailer's get_oauth_token.php helper to prevent exposing OAuth credential helper scripts on shared hosting."
+    "cleanup-phpmailer-oauth-helper": "PHPMailer ships an example helper get_oauth_token.php that is unused in Attendly and can expose credential helpers if vendor/ is web-accessible; remove it post-install/update until upstream provides an exclusion flag."
   }
 }

@@ -14,6 +14,7 @@ use Attendly\Support\Flash;
 use Attendly\Security\HostValidationMiddleware;
 use Attendly\Security\SecurityHeadersMiddleware;
 use Attendly\Controllers\AuthController;
+use Attendly\Controllers\MfaLoginController;
 use Attendly\Security\RequireAdminMiddleware;
 use Attendly\Security\RequireAuthMiddleware;
 use Attendly\Middleware\CurrentUserMiddleware;
@@ -27,6 +28,7 @@ use Attendly\Controllers\PayslipController;
 use Attendly\Controllers\DashboardController;
 use Attendly\Controllers\PayrollViewerController;
 use Attendly\Controllers\WorkSessionController;
+use Attendly\Controllers\MfaSettingsController;
 use Attendly\Support\AppTime;
 
 function create_app(): \Slim\App
@@ -124,6 +126,13 @@ function create_app(): \Slim\App
     $app->post('/login', [$authController, 'login']);
     $app->post('/logout', [$authController, 'logout']);
 
+    // MFA (メールOTP)
+    $mfaLoginController = new MfaLoginController($view);
+    $app->get('/login/mfa', [$mfaLoginController, 'show']);
+    $app->post('/login/mfa/email/send', [$mfaLoginController, 'sendEmail']);
+    $app->post('/login/mfa', [$mfaLoginController, 'verify']);
+    $app->get('/login/mfa/cancel', [$mfaLoginController, 'cancel']);
+
     // Registration (placeholder: logic to be completed with DB writes + MFA)
     $registerController = new RegisterController($view);
     $app->get('/register', [$registerController, 'show']);
@@ -172,6 +181,12 @@ function create_app(): \Slim\App
     $app->post('/work-sessions/punch', [$workSessions, 'toggle'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls', [$payrollViewer, 'index'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls/{id}/download', [$payrollViewer, 'download'])->add(new RequireAuthMiddleware());
+
+    $mfaSettings = new MfaSettingsController($view);
+    $app->get('/settings/mfa', [$mfaSettings, 'show'])->add(new RequireAuthMiddleware());
+    $app->post('/settings/mfa/totp/verify', [$mfaSettings, 'verifyTotp'])->add(new RequireAuthMiddleware());
+    $app->post('/settings/mfa/recovery-codes/regenerate', [$mfaSettings, 'regenerateRecoveryCodes'])->add(new RequireAuthMiddleware());
+    $app->post('/settings/mfa/trusted-devices/revoke', [$mfaSettings, 'revokeTrustedDevices'])->add(new RequireAuthMiddleware());
 
     $app->get('/whoami', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
         $user = $request->getAttribute('currentUser');

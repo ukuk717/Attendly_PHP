@@ -29,9 +29,11 @@ final class RequireAdminMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        $rawUserId = is_array($user) ? ($user['id'] ?? null) : null;
+        $hashedUserId = $rawUserId !== null ? hash('sha256', (string)$rawUserId) : 'unknown';
         error_log(sprintf(
-            'Unauthorized admin access attempt: user_id=%s, role=%s, path=%s',
-            is_array($user) ? ($user['id'] ?? 'unknown') : 'unknown',
+            'Unauthorized admin access attempt: user_ref=%s, role=%s, path=%s',
+            $hashedUserId,
             is_array($user) ? ($user['role'] ?? 'none') : 'none',
             $request->getUri()->getPath()
         ));

@@ -28,6 +28,9 @@ final class WorkSessionController
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
 
+        $errorId = uniqid('work_session_', true);
+        $userRef = hash('sha256', (string)$user['id']);
+
         try {
             $result = $this->service->togglePunch((int)$user['id']);
             if ($result['status'] === 'opened') {
@@ -37,12 +40,15 @@ final class WorkSessionController
             }
         } catch (\Throwable $e) {
             $errorId = uniqid('work_session_', true);
+            $userRef = hash('sha256', (string)$user['id']);
             error_log(sprintf(
-                'Work session toggle failed [Error ID: %s] (class: %s)',
+                'Work session toggle failed [Error ID: %s, user_ref: %s]: %s',
                 $errorId,
-                get_class($e)
+                $userRef,
+                $e->getMessage()
             ));
-            // Detailed error information should be sent to a secure logging sink with PII scrubbing.
+            // TODO: Send full stack trace to secure logging sink with PII scrubbing
+            // SecureLogger::logException($e, ['error_id' => $errorId, 'user_ref' => $userRef]);
             Flash::add('error', '打刻処理に失敗しました。時間をおいて再度お試しください。');
         }
 

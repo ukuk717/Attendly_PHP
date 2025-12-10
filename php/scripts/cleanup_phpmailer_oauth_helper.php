@@ -3,42 +3,34 @@
 declare(strict_types=1);
 
 /**
- * Remove PHPMailer's OAuth helper script to avoid exposing a credential helper
- * on shared hosting environments such as Lolipop.
+ * Remove PHPMailer's OAuth helper script shipped as an example.
+ *
+ * The helper is not needed in production and could expose an interactive
+ * credential flow if the vendor directory is publicly reachable on shared
+ * hosting. This cleanup keeps the deployment footprint minimal until we can
+ * rely on an upstream option to exclude the file.
  */
+$projectRoot = dirname(__DIR__);
+$vendorDir = realpath($projectRoot . '/vendor');
 
-$helperPath = __DIR__ . '/../vendor/phpmailer/phpmailer/get_oauth_token.php';
-$helperDir = __DIR__ . '/../vendor/phpmailer/phpmailer';
-
-$helperDirReal = realpath($helperDir);
-if ($helperDirReal === false) {
-    // PHPMailer not installed yet; nothing to clean.
+if ($vendorDir === false) {
+    // Dependencies not installed yet; nothing to clean up.
     return;
 }
 
-$helperReal = realpath($helperPath);
-if ($helperReal === false) {
-    // Helper already removed.
-    return;
+$targetPath = implode(DIRECTORY_SEPARATOR, [$vendorDir, 'phpmailer', 'phpmailer', 'get_oauth_token.php']);
+$targetRealPath = realpath($targetPath) ?: $targetPath;
+
+// Ensure we never delete outside the vendor directory even if symlinks are present.
+if (!str_starts_with($targetRealPath, $vendorDir . DIRECTORY_SEPARATOR)) {
+    throw new RuntimeException('Unsafe target path resolved for PHPMailer OAuth helper.');
 }
 
-if (!str_starts_with($helperReal, $helperDirReal . DIRECTORY_SEPARATOR)) {
-    fwrite(STDERR, "安全のため、想定外のパスの削除を拒否しました: {$helperReal}" . PHP_EOL);
-    exit(1);
+if (is_file($targetRealPath)) {
+    if (!@unlink($targetRealPath)) {
+        throw new RuntimeException('Failed to remove PHPMailer OAuth helper: ' . $targetRealPath);
+    }
+    echo "Removed PHPMailer OAuth helper at {$targetRealPath}" . PHP_EOL;
+} else {
+    echo "No PHPMailer OAuth helper found; nothing to remove." . PHP_EOL;
 }
-
-if (!is_file($helperReal)) {
-    return;
-}
-
-if (!is_writable($helperReal)) {
-    fwrite(STDERR, "ファイルに書き込みできないため削除できませんでした: {$helperReal}" . PHP_EOL);
-    exit(1);
-}
-
-if (!unlink($helperReal)) {
-    fwrite(STDERR, "get_oauth_token.php の削除に失敗しました: {$helperReal}" . PHP_EOL);
-    exit(1);
-}
-
-echo "Removed PHPMailer OAuth helper for security hardening." . PHP_EOL;

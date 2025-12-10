@@ -7,6 +7,7 @@ namespace Attendly\Controllers;
 use Attendly\Security\CsrfToken;
 use Attendly\Support\Flash;
 use Attendly\Support\SessionAuth;
+use Attendly\Database\Repository;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -15,14 +16,24 @@ use RuntimeException;
 
 final class AuthController
 {
-    public function __construct(private View $view, private ?AuthService $authService = null)
+    private Repository $repository;
+    private string $trustCookieName;
+    private int $trustTtlDays;
+
+    public function __construct(private View $view, private ?AuthService $authService = null, ?Repository $repository = null)
     {
+        $this->repository = $repository ?? new Repository();
+        $this->trustCookieName = trim((string)($_ENV['MFA_TRUST_COOKIE_NAME'] ?? 'mfa_trust'));
+        $this->trustTtlDays = max(1, (int)($_ENV['MFA_TRUST_TTL_DAYS'] ?? 30));
     }
 
     public function showLogin(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         if (SessionAuth::getUser() !== null) {
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        if (SessionAuth::getPendingMfa() !== null) {
+            return $response->withStatus(303)->withHeader('Location', '/login/mfa');
         }
 
         $html = $this->view->renderWithLayout('login', [
@@ -78,6 +89,46 @@ final class AuthController
                 Flash::add('error', 'テナント情報が不正です。');
                 return $response->withStatus(303)->withHeader('Location', '/login');
             }
+            $trustedResponse = $this->maybeLoginWithTrustedDevice($request, $response, $result['user']);
+            if ($trustedResponse !== null) {
+                return $trustedResponse;
+            }
+            $methods = $this->repository->listVerifiedMfaMethods((int)$result['user']['id']);
+            $pendingMethods = [];
+            foreach ($methods as $method) {
+                if ($method['type'] === 'email_otp') {
+                    $targetEmail = '';
+                    if (isset($method['config']['email']) && is_string($method['config']['email'])) {
+                        $targetEmail = trim($method['config']['email']);
+                    }
+                    if ($targetEmail === '') {
+                        $targetEmail = $result['user']['email'];
+                    }
+                    $pendingMethods[] = [
+                        'id' => $method['id'],
+                        'type' => 'email_otp',
+                        'target_email' => $targetEmail,
+                    ];
+                } elseif ($method['type'] === 'totp') {
+                    $pendingMethods[] = [
+                        'id' => $method['id'],
+                        'type' => 'totp',
+                    ];
+                }
+            }
+            if ($pendingMethods !== []) {
+                SessionAuth::setPendingMfa([
+                    'user' => [
+                        'id' => $result['user']['id'],
+                        'email' => $result['user']['email'],
+                        'role' => $result['user']['role'] ?? null,
+                        'tenant_id' => $result['user']['tenant_id'] ?? null,
+                    ],
+                    'methods' => $pendingMethods,
+                ]);
+                Flash::add('info', '多要素認証を完了してください。');
+                return $response->withStatus(303)->withHeader('Location', '/login/mfa');
+            } else {
             SessionAuth::setUser([
                 'id' => $result['user']['id'],
                 'email' => $result['user']['email'],
@@ -85,7 +136,9 @@ final class AuthController
                 'tenant_id' => $result['user']['tenant_id'] ?? null,
             ]);
             Flash::add('success', 'ログインしました。');
+            $response = $this->clearTrustCookie($response);
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
         }
 
         $error = $result['error'] ?? 'unknown';
@@ -117,8 +170,70 @@ final class AuthController
             session_regenerate_id(true);
         }
         Flash::add('success', 'ログアウトしました。');
+        $response = $this->clearTrustCookie($response);
         return $response
             ->withStatus(303)
             ->withHeader('Location', '/login');
+    }
+
+    /**
+     * @param array{id:int,email:string,role:?string,tenant_id:?int} $user
+     */
+    private function maybeLoginWithTrustedDevice(ServerRequestInterface $request, ResponseInterface $response, array $user): ?ResponseInterface
+    {
+        $cookies = $request->getCookieParams();
+        $token = (string)($cookies[$this->trustCookieName] ?? '');
+        if ($token === '') {
+            return null;
+        }
+        $hash = hash('sha256', $token);
+        $record = $this->repository->findTrustedDeviceByHash((int)$user['id'], $hash);
+        if ($record === null || $record['expires_at'] <= AppTime::now()) {
+            return null;
+        }
+        $this->repository->touchTrustedDevice($record['id']);
+        SessionAuth::setUser([
+            'id' => $user['id'],
+            'email' => $user['email'],
+            'role' => $user['role'] ?? null,
+            'tenant_id' => $user['tenant_id'] ?? null,
+        ]);
+        Flash::add('success', '信頼済みデバイスでログインしました。');
+        $newCookie = $this->buildTrustCookie($token, AppTime::now()->modify('+' . $this->trustTtlDays . ' days'));
+        return $response->withStatus(303)
+            ->withAddedHeader('Set-Cookie', $newCookie)
+            ->withHeader('Location', '/dashboard');
+    }
+
+    private function buildTrustCookie(string $token, \DateTimeImmutable $expiresAt): string
+    {
+        $attrs = [
+            "{$this->trustCookieName}={$token}",
+            'Path=/',
+            'HttpOnly',
+            'SameSite=Lax',
+            'Expires=' . $expiresAt->setTimezone(new \DateTimeZone('GMT'))->format('D, d M Y H:i:s T'),
+        ];
+        $secure = filter_var($_ENV['APP_COOKIE_SECURE'] ?? false, FILTER_VALIDATE_BOOL);
+        if ($secure) {
+            $attrs[] = 'Secure';
+        }
+        return implode('; ', $attrs);
+    }
+
+    private function clearTrustCookie(ResponseInterface $response): ResponseInterface
+    {
+        $attrs = [
+            "{$this->trustCookieName}=deleted",
+            'Path=/',
+            'HttpOnly',
+            'SameSite=Lax',
+            'Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        ];
+        $secure = filter_var($_ENV['APP_COOKIE_SECURE'] ?? false, FILTER_VALIDATE_BOOL);
+        if ($secure) {
+            $attrs[] = 'Secure';
+        }
+        return $response->withAddedHeader('Set-Cookie', implode('; ', $attrs));
     }
 }

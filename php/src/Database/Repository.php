@@ -146,6 +146,375 @@ final class Repository
         $stmt->execute([$userId]);
     }
 
+    /**
+     * @return array<int,array{id:int,user_id:int,type:string,secret:?string,config:?array,verified_at:?DateTimeImmutable,last_used_at:?DateTimeImmutable}>
+     */
+    public function listVerifiedMfaMethods(int $userId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, type, secret, config_json, verified_at, last_used_at
+             FROM user_mfa_methods
+             WHERE user_id = ?
+               AND is_verified = 1
+             ORDER BY type ASC, id ASC'
+        );
+        $stmt->execute([$userId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $methods = [];
+        foreach ($rows as $row) {
+            $methods[] = [
+                'id' => (int)$row['id'],
+                'user_id' => (int)$row['user_id'],
+                'type' => (string)$row['type'],
+                'secret' => $row['secret'] !== null ? (string)$row['secret'] : null,
+                'config' => $this->decodeJsonConfig($row['config_json']),
+                'verified_at' => AppTime::fromStorage($row['verified_at']),
+                'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+            ];
+        }
+        return $methods;
+    }
+
+    public function touchMfaMethodUsed(int $methodId): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_mfa_methods SET last_used_at = ?, updated_at = ? WHERE id = ?'
+        );
+        $now = AppTime::now();
+        $formatted = $this->formatDateTime($now);
+        $stmt->execute([$formatted, $formatted, $methodId]);
+    }
+
+    /**
+     * @return array{id:int,user_id:int,type:string,secret:?string,config:?array,verified_at:?DateTimeImmutable,last_used_at:?DateTimeImmutable}|null
+     */
+    public function findVerifiedMfaMethodById(int $userId, int $methodId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, type, secret, config_json, verified_at, last_used_at
+             FROM user_mfa_methods
+             WHERE id = ? AND user_id = ? AND is_verified = 1
+             LIMIT 1'
+        );
+        $stmt->execute([$methodId, $userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'type' => (string)$row['type'],
+            'secret' => $row['secret'] !== null ? (string)$row['secret'] : null,
+            'config' => $this->decodeJsonConfig($row['config_json']),
+            'verified_at' => AppTime::fromStorage($row['verified_at']),
+            'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+        ];
+    }
+
+    /**
+     * @return array{id:int,user_id:int,type:string,secret:?string,config:?array,verified_at:?DateTimeImmutable,last_used_at:?DateTimeImmutable}|null
+     */
+    public function findVerifiedMfaMethodByType(int $userId, string $type): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, type, secret, config_json, verified_at, last_used_at
+             FROM user_mfa_methods
+             WHERE user_id = ? AND type = ? AND is_verified = 1
+             LIMIT 1'
+        );
+        $stmt->execute([$userId, $type]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'type' => (string)$row['type'],
+            'secret' => $row['secret'] !== null ? (string)$row['secret'] : null,
+            'config' => $this->decodeJsonConfig($row['config_json']),
+            'verified_at' => AppTime::fromStorage($row['verified_at']),
+            'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+        ];
+    }
+
+    /**
+     * @return array{id:int,user_id:int,type:string,secret:?string,config:?array,verified_at:?DateTimeImmutable,last_used_at:?DateTimeImmutable}
+     */
+    public function upsertTotpMethod(int $userId, string $secret, array $config = []): array
+    {
+        $now = AppTime::now();
+        $existing = $this->findVerifiedMfaMethodByType($userId, 'totp');
+        if ($existing !== null) {
+            $stmt = $this->pdo->prepare(
+                'UPDATE user_mfa_methods
+                 SET secret = ?, config_json = ?, is_verified = 1, verified_at = ?, updated_at = ?
+                 WHERE id = ?'
+            );
+            $stmt->execute([
+                $secret,
+                $this->encodeMetadata($config),
+                $this->formatDateTime($now),
+                $this->formatDateTime($now),
+                $existing['id'],
+            ]);
+            return $this->findVerifiedMfaMethodById($userId, (int)$existing['id']) ?? $existing;
+        }
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO user_mfa_methods (user_id, type, secret, config_json, is_verified, verified_at, last_used_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 1, ?, NULL, ?, ?)'
+        );
+        $stmt->execute([
+            $userId,
+            'totp',
+            $secret,
+            $this->encodeMetadata($config),
+            $this->formatDateTime($now),
+            $this->formatDateTime($now),
+            $this->formatDateTime($now),
+        ]);
+        $id = (int)$this->pdo->lastInsertId();
+        $found = $this->findVerifiedMfaMethodById($userId, $id);
+        if ($found === null) {
+            throw new RuntimeException('TOTPメソッドの作成に失敗しました。');
+        }
+        return $found;
+    }
+
+    /**
+     * @return array{id:int,user_id:int,type:string,secret:?string,config:?array,verified_at:?DateTimeImmutable,last_used_at:?DateTimeImmutable}|null
+     */
+    public function updateMfaFailureState(int $methodId, bool $reset, int $maxFailures, int $lockSeconds): ?array
+    {
+        $started = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $started = true;
+        }
+        try {
+            $stmt = $this->pdo->prepare(
+                'SELECT id, user_id, type, secret, config_json, verified_at, last_used_at
+                 FROM user_mfa_methods
+                 WHERE id = ? AND is_verified = 1
+                 FOR UPDATE'
+            );
+            $stmt->execute([$methodId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                if ($started) {
+                    $this->pdo->rollBack();
+                }
+                return null;
+            }
+            $config = $this->decodeJsonConfig($row['config_json']) ?? [];
+            if ($reset) {
+                $config['failedAttempts'] = 0;
+                $config['lockUntil'] = null;
+            } else {
+                $attempts = isset($config['failedAttempts']) ? (int)$config['failedAttempts'] + 1 : 1;
+                $config['failedAttempts'] = $attempts;
+                if ($attempts >= $maxFailures && $lockSeconds > 0) {
+                    $config['lockUntil'] = AppTime::now()->modify("+{$lockSeconds} seconds")->format('c');
+                }
+            }
+            $update = $this->pdo->prepare(
+                'UPDATE user_mfa_methods SET config_json = ?, updated_at = ? WHERE id = ?'
+            );
+            $update->execute([
+                $this->encodeMetadata($config),
+                $this->formatDateTime(AppTime::now()),
+                $methodId,
+            ]);
+            if ($started) {
+                $this->pdo->commit();
+            }
+            return [
+                'id' => (int)$row['id'],
+                'user_id' => (int)$row['user_id'],
+                'type' => (string)$row['type'],
+                'secret' => $row['secret'] !== null ? (string)$row['secret'] : null,
+                'config' => $config,
+                'verified_at' => AppTime::fromStorage($row['verified_at']),
+                'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+            ];
+        } catch (\Throwable $e) {
+            if ($started && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * @return array{id:int,user_id:int,code_hash:string,used_at:?DateTimeImmutable}|null
+     */
+    public function findUsableRecoveryCode(int $userId, string $codeHash): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, code_hash, used_at
+             FROM user_mfa_recovery_codes
+             WHERE user_id = ? AND code_hash = ? AND used_at IS NULL
+             LIMIT 1'
+        );
+        $stmt->execute([$userId, $codeHash]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'code_hash' => (string)$row['code_hash'],
+            'used_at' => AppTime::fromStorage($row['used_at']),
+        ];
+    }
+
+    public function markRecoveryCodeUsed(int $id): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_mfa_recovery_codes SET used_at = ? WHERE id = ?'
+        );
+        $stmt->execute([$this->formatDateTime(AppTime::now()), $id]);
+    }
+
+    public function hasActiveRecoveryCodes(int $userId): bool
+    {
+        $stmt = $this->pdo->prepare('SELECT 1 FROM user_mfa_recovery_codes WHERE user_id = ? AND used_at IS NULL LIMIT 1');
+        $stmt->execute([$userId]);
+        return (bool)$stmt->fetchColumn();
+    }
+
+    public function findTrustedDeviceByHash(int $userId, string $tokenHash): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, token_hash, device_info, expires_at, last_used_at
+             FROM user_mfa_trusted_devices
+             WHERE user_id = ? AND token_hash = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$userId, $tokenHash]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'token_hash' => (string)$row['token_hash'],
+            'device_info' => $row['device_info'] !== null ? (string)$row['device_info'] : null,
+            'expires_at' => AppTime::fromStorage($row['expires_at']) ?? AppTime::now(),
+            'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+        ];
+    }
+
+    /**
+     * @return array{id:int,user_id:int,token_hash:string,device_info:?string,expires_at:DateTimeImmutable,last_used_at:?DateTimeImmutable}
+     */
+    public function createTrustedDevice(int $userId, string $tokenHash, ?string $deviceInfo, \DateTimeImmutable $expiresAt): array
+    {
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO user_mfa_trusted_devices (user_id, token_hash, device_info, expires_at, last_used_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $userId,
+            $tokenHash,
+            $deviceInfo,
+            $this->formatDateTime($expiresAt),
+            $this->formatDateTime($now),
+            $this->formatDateTime($now),
+        ]);
+        $id = (int)$this->pdo->lastInsertId();
+        $found = $this->findTrustedDeviceById($id);
+        if ($found === null) {
+            throw new RuntimeException('トラストデバイスの作成に失敗しました。');
+        }
+        return $found;
+    }
+
+    /**
+     * @return array{id:int,user_id:int,token_hash:string,device_info:?string,expires_at:DateTimeImmutable,last_used_at:?DateTimeImmutable}|null
+     */
+    public function findTrustedDeviceById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, token_hash, device_info, expires_at, last_used_at
+             FROM user_mfa_trusted_devices
+             WHERE id = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'token_hash' => (string)$row['token_hash'],
+            'device_info' => $row['device_info'] !== null ? (string)$row['device_info'] : null,
+            'expires_at' => AppTime::fromStorage($row['expires_at']) ?? AppTime::now(),
+            'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+        ];
+    }
+
+    public function touchTrustedDevice(int $id): void
+    {
+        $now = $this->formatDateTime(AppTime::now());
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_mfa_trusted_devices SET last_used_at = ?, updated_at = ? WHERE id = ?'
+        );
+        $stmt->execute([$now, $now, $id]);
+    }
+
+    public function deleteTrustedDevicesByUser(int $userId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM user_mfa_trusted_devices WHERE user_id = ?');
+        $stmt->execute([$userId]);
+    }
+
+    /**
+     * @param string[] $hashes
+     */
+    public function replaceRecoveryCodes(int $userId, array $hashes): void
+    {
+        $started = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $started = true;
+        }
+        try {
+            $delete = $this->pdo->prepare('DELETE FROM user_mfa_recovery_codes WHERE user_id = ?');
+            $delete->execute([$userId]);
+            if ($hashes !== []) {
+                $now = $this->formatDateTime(AppTime::now());
+                $insert = $this->pdo->prepare(
+                    'INSERT INTO user_mfa_recovery_codes (user_id, code_hash, used_at, created_at) VALUES (?, ?, NULL, ?)'
+                );
+                foreach ($hashes as $hash) {
+                    $insert->execute([$userId, $hash, $now]);
+                }
+            }
+            if ($started) {
+                $this->pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($started && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    public function deleteRecoveryCodesByUser(int $userId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM user_mfa_recovery_codes WHERE user_id = ?');
+        $stmt->execute([$userId]);
+    }
+
     public function updateUserPassword(int $userId, string $passwordHash): void
     {
         $stmt = $this->pdo->prepare(
@@ -1114,6 +1483,23 @@ final class Repository
             return null;
         }
         return json_encode($metadata, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * @param string|null $json
+     * @return array<string,mixed>|null
+     */
+    private function decodeJsonConfig(?string $json): ?array
+    {
+        if ($json === null) {
+            return null;
+        }
+        try {
+            $decoded = json_decode((string)$json, true, 512, JSON_THROW_ON_ERROR);
+            return is_array($decoded) ? $decoded : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

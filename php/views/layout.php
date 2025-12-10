@@ -36,6 +36,7 @@
         <?php else: ?>
           <a href="/payrolls" class="nav-link">給与明細</a>
         <?php endif; ?>
+        <a href="/settings/mfa" class="nav-link">MFA設定</a>
         <span class="nav-user"><?= $e($currentUser['email'] ?? '') ?></span>
         <form id="logout-form" method="post" action="/logout" class="nav-form">
           <input type="hidden" name="csrf_token" value="<?= $e($csrfToken) ?>">
