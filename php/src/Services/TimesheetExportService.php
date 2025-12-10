@@ -40,7 +40,7 @@ final class TimesheetExportService
                 $targetTz = AppTime::timezone();
             }
         }
-        $rows = $this->repository->fetchWorkSessions($filters['tenant_id'], $filters['start'], $filters['end'], $filters['user_id']);
+        $rows = $this->repository->fetchWorkSessions($filters['tenant_id'], $filters['start'], $filters['end'], $filters['user_id'] ?? null);
 
         if (!is_dir($this->exportDir) && !mkdir($concurrentDirectory = $this->exportDir, 0775, true) && !is_dir($concurrentDirectory)) {
             throw new RuntimeException('エクスポートディレクトリを作成できませんでした。');
@@ -71,7 +71,8 @@ final class TimesheetExportService
             $durationMinutes = null;
             if ($row['end_time'] !== null) {
                 $interval = $row['start_time']->diff($row['end_time']);
-                $durationMinutes = ($interval->days * 24 * 60) + ($interval->h * 60) + $interval->i + (int)floor($interval->s / 60);
+                $days = $interval->days !== false ? $interval->days : 0;
+                $durationMinutes = ($days * 24 * 60) + ($interval->h * 60) + $interval->i + (int)floor($interval->s / 60);
             }
             $file->fputcsv([
                 $row['user_id'],

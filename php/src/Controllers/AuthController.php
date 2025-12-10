@@ -67,6 +67,17 @@ final class AuthController
         }
 
         if ($result['user']) {
+            $allowedRoles = ['admin', 'user', 'manager', 'guest'];
+            $role = $result['user']['role'] ?? null;
+            if ($role !== null && !in_array($role, $allowedRoles, true)) {
+                Flash::add('error', '無効なロールが検出されました。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
+            $tenantId = $result['user']['tenant_id'] ?? null;
+            if ($tenantId !== null && !is_int($tenantId)) {
+                Flash::add('error', 'テナント情報が不正です。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
             SessionAuth::setUser([
                 'id' => $result['user']['id'],
                 'email' => $result['user']['email'],

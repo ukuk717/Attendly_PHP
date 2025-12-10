@@ -106,7 +106,7 @@ final class PayslipController
                 Flash::add('error', '支給額は数値で入力してください。');
                 return $response->withStatus(303)->withHeader('Location', '/admin/payslips/send');
             }
-        $netAmount = (float)$data['net_amount'];
+            $netAmount = (float)$data['net_amount'];
         }
         if ($employeeId <= 0 || $summary === '' || $sentOnStr === '') {
             Flash::add('error', '従業員・支給日・概要は必須です。');

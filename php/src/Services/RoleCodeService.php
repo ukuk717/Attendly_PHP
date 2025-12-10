@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Attendly\Services;
 
 use Attendly\Database\Repository;
-use DateInterval;
 use DateTimeImmutable;
 use RuntimeException;
 
@@ -24,18 +23,22 @@ final class RoleCodeService
      */
     public function create(array $data): array
     {
-        $tenant = $this->repository->findTenantById($data['tenant_id']);
+        if (!isset($data['tenant_id'], $data['created_by'])) {
+            throw new RuntimeException('必須パラメータが不足しています。');
+        }
+
+        $tenant = $this->repository->findTenantById((int)$data['tenant_id']);
         if ($tenant === null || ($tenant['status'] ?? '') !== 'active') {
             throw new RuntimeException('テナントが無効です。');
         }
 
         $code = $this->generateUniqueCode();
         $payload = [
-            'tenant_id' => $data['tenant_id'],
+            'tenant_id' => (int)$data['tenant_id'],
             'code' => $code,
-            'expires_at' => $data['expires_at'] ?? null,
-            'max_uses' => $data['max_uses'] ?? null,
-            'created_by' => $data['created_by'],
+            'expires_at' => ($data['expires_at'] ?? null) instanceof DateTimeImmutable ? $data['expires_at'] : null,
+            'max_uses' => isset($data['max_uses']) ? (int)$data['max_uses'] : null,
+            'created_by' => (int)$data['created_by'],
         ];
 
         return $this->repository->createRoleCode($payload);
@@ -47,7 +50,7 @@ final class RoleCodeService
     public function listForTenant(int $tenantId, int $limit = 100): array
     {
         if ($limit <= 0 || $limit > 1000) {
-            throw new RuntimeException('制限値は1から1000の間である必要があります。');
+            throw new RuntimeException('制限値は1から1000の間で指定してください。');
         }
         return $this->repository->listRoleCodes($tenantId, $limit);
     }
@@ -63,10 +66,13 @@ final class RoleCodeService
 
     private function generateUniqueCode(): string
     {
-        // 10 文字の英数字を生成し、重複時はリトライ（衝突確率を極小化）
+        // 10桁の英数字コードを生成し、重複時はリトライ
         for ($i = 0; $i < 5; $i++) {
-            $raw = bin2hex(random_bytes(8));
-            $code = strtoupper(substr($raw, 0, 10));
+            $chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+            $code = '';
+            for ($j = 0; $j < 10; $j++) {
+                $code .= $chars[random_int(0, 35)];
+            }
             if ($this->repository->findRoleCodeByCode($code) === null) {
                 return $code;
             }

@@ -17,6 +17,16 @@
     }
   },
   "scripts": {
-    "start": "php -S localhost:8000 -t public"
+    "start": "php -S localhost:8000 -t public",
+    "cleanup-phpmailer-oauth-helper": "php ./scripts/cleanup_phpmailer_oauth_helper.php",
+    "post-install-cmd": [
+      "@cleanup-phpmailer-oauth-helper"
+    ],
+    "post-update-cmd": [
+      "@cleanup-phpmailer-oauth-helper"
+    ]
+  },
+  "scripts-descriptions": {
+    "cleanup-phpmailer-oauth-helper": "Remove PHPMailer's get_oauth_token.php helper to prevent exposing OAuth credential helper scripts on shared hosting."
   }
 }

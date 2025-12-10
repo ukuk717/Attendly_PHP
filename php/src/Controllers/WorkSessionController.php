@@ -36,6 +36,13 @@ final class WorkSessionController
                 Flash::add('success', '勤務を終了しました。');
             }
         } catch (\Throwable $e) {
+            $errorId = uniqid('work_session_', true);
+            error_log(sprintf(
+                'Work session toggle failed [Error ID: %s] (class: %s)',
+                $errorId,
+                get_class($e)
+            ));
+            // Detailed error information should be sent to a secure logging sink with PII scrubbing.
             Flash::add('error', '打刻処理に失敗しました。時間をおいて再度お試しください。');
         }
 

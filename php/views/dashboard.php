@@ -7,8 +7,19 @@
   <h3>ワンクリック打刻</h3>
   <p class="status-row">
     現在の状態:
+    <?php 
+      $formattedStartTime = 'N/A';
+      try {
+        if (isset($openSession['start_time']) && $openSession['start_time'] instanceof DateTime) {
+          $tz = new DateTimeZone($timezone ?? 'Asia/Tokyo');
+          $formattedStartTime = $openSession['start_time']->setTimezone($tz)->format('Y-m-d H:i');
+        }
+      } catch (Exception $e) {
+        $formattedStartTime = '表示エラー';
+      }
+    ?>
     <?php if (!empty($openSession)): ?>
-      <strong class="status in-progress">勤務中（開始: <?= $e($openSession['start_time']->setTimezone(new DateTimeZone($timezone ?? 'Asia/Tokyo'))->format('Y-m-d H:i')) ?>）</strong>
+      <strong class="status in-progress">勤務中（開始: <?= $e($formattedStartTime) ?>）</strong>
     <?php else: ?>
       <strong class="status idle">待機中</strong>
     <?php endif; ?>

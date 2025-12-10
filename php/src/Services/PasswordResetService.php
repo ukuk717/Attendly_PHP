@@ -112,7 +112,8 @@ final class PasswordResetService
                 $pdo->rollBack();
                 return ['ok' => false, 'reason' => 'used'];
             }
-            if ($reset['expires_at'] <= $now) {
+            $expiresAt = AppTime::fromStorage((string)$reset['expires_at']) ?? $now;
+            if ($expiresAt <= $now) {
                 $pdo->rollBack();
                 return ['ok' => false, 'reason' => 'expired'];
             }

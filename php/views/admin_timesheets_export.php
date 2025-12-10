@@ -22,7 +22,15 @@
           <?php
             $name = trim(($emp['last_name'] ?? '') . ' ' . ($emp['first_name'] ?? ''));
             $email = $emp['email'] ?? '';
-            $label = $name !== '' ? "{$name} ({$email})" : $email;
+            if ($name !== '' && $email !== '') {
+              $label = "{$name} ({$email})";
+            } elseif ($name !== '') {
+              $label = $name;
+            } elseif ($email !== '') {
+              $label = $email;
+            } else {
+              continue;
+            }
           ?>
           <option value="<?= $e((string)$emp['id']) ?>"><?= $e($label) ?></option>
         <?php endforeach; ?>

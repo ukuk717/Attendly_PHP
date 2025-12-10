@@ -24,6 +24,10 @@ final class AuthService
             return ['user' => null, 'error' => 'not_found'];
         }
 
+        if (!isset($user['role']) || !isset($user['tenant_id'])) {
+            return ['user' => null, 'error' => 'incomplete_user_data'];
+        }
+
         if ($user['status'] !== null && $user['status'] !== 'active') {
             return ['user' => null, 'error' => 'inactive'];
         }

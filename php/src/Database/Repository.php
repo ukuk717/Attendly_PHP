@@ -409,14 +409,13 @@ final class Repository
                 $session = $this->findWorkSessionById($sessionId);
                 $status = 'closed';
             } else {
-                $createdAt = AppTime::now();
                 $insert = $this->pdo->prepare(
                     'INSERT INTO work_sessions (user_id, start_time, end_time, archived_at, created_at) VALUES (?, ?, NULL, NULL, ?)'
                 );
                 $insert->execute([
                     $userId,
                     $this->formatDateTime($now),
-                    $this->formatDateTime($createdAt),
+                    $this->formatDateTime($now),
                 ]);
                 $sessionId = (int)$this->pdo->lastInsertId();
                 $session = $this->findWorkSessionById($sessionId);

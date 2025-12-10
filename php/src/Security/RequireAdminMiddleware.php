@@ -29,6 +29,13 @@ final class RequireAdminMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        error_log(sprintf(
+            'Unauthorized admin access attempt: user_id=%s, role=%s, path=%s',
+            is_array($user) ? ($user['id'] ?? 'unknown') : 'unknown',
+            is_array($user) ? ($user['role'] ?? 'none') : 'none',
+            $request->getUri()->getPath()
+        ));
+
         $accept = strtolower($request->getHeaderLine('Accept'));
         $expectsJson = str_contains($accept, 'application/json')
             || str_contains($accept, 'text/json')
@@ -37,7 +44,11 @@ final class RequireAdminMiddleware implements MiddlewareInterface
 
         if ($expectsJson) {
             $response = new Response(403);
-            $response->getBody()->write(json_encode(['error' => 'forbidden'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $json = json_encode(['error' => 'forbidden'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if ($json === false) {
+                $json = '{"error":"forbidden"}';
+            }
+            $response->getBody()->write($json);
             return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
         }
 

@@ -56,7 +56,11 @@ final class RoleCodeController
             return $this->error($response, 403, 'forbidden');
         }
         $data = (array)$request->getParsedBody();
-        $maxUses = $this->nullableInt($data['max_uses'] ?? null, 1, 100000);
+        try {
+            $maxUses = $this->nullableInt($data['max_uses'] ?? null, 1, 100000);
+        } catch (\RuntimeException $e) {
+            return $this->error($response, 400, 'invalid_max_uses');
+        }
         $expiresAt = null;
         if (!empty($data['expires_at'])) {
             $expiresAt = AppTime::parseDate((string)$data['expires_at']);
@@ -137,7 +141,12 @@ final class RoleCodeController
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
         $data = (array)$request->getParsedBody();
-        $maxUses = $this->nullableInt($data['max_uses'] ?? null, 1, 100000);
+        try {
+            $maxUses = $this->nullableInt($data['max_uses'] ?? null, 1, 100000);
+        } catch (\RuntimeException $e) {
+            Flash::add('error', '最大使用回数が不正です。');
+            return $response->withStatus(303)->withHeader('Location', '/admin/role-codes');
+        }
         $expiresAt = null;
         if (!empty($data['expires_at'])) {
             $expiresAt = AppTime::parseDate((string)$data['expires_at']);

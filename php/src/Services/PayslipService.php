@@ -95,6 +95,9 @@ final class PayslipService
                 'sent_on' => $data['sent_on'],
                 'sent_at' => $now,
             ]);
+            if (empty($employee['email'])) {
+                throw new RuntimeException('従業員のメールアドレスが設定されていません。');
+            }
             $this->mailer->send($employee['email'], $subject, $body);
         } catch (\Throwable $e) {
             @unlink($filePath);  // Clean up file

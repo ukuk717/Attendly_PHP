@@ -17,7 +17,7 @@ final class SessionAuth
             'id' => $user['id'] ?? null,
             'email' => $user['email'] ?? null,
             'role' => $user['role'] ?? null,
-            'tenant_id' => $user['tenant_id'] ?? null,
+            'tenant_id' => isset($user['tenant_id']) ? (int)$user['tenant_id'] : null,
         ];
     }
 

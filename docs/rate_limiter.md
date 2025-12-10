@@ -28,7 +28,7 @@
 - ファイルパスを変える場合はアクセス権限に注意し、`storage/` 配下と同等の書き込み権限を確保する。
 - file ドライバの簡易検証例（CLI 用）:
   ```bash
-  @'
+  php << 'EOF'
   <?php
   require __DIR__ . "/php/vendor/autoload.php";
   require __DIR__ . "/php/src/bootstrap.php";
@@ -39,5 +39,5 @@
   for ($i = 1; $i <= 3; $i++) {
       echo ($i . ":" . (RateLimiter::allow("cli-test", 2, 30) ? "allow" : "deny") . PHP_EOL);
   }
-  '@ | php
+  EOF
   ```

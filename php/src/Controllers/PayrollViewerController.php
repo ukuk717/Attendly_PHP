@@ -32,8 +32,9 @@ final class PayrollViewerController
         }
         $records = $this->repository->listPayrollRecordsByEmployee((int)$user['id'], 50);
         $items = array_map(static function (array $row): array {
-            assert($row['sent_on'] instanceof \DateTime);
-            assert($row['sent_at'] instanceof \DateTime);
+            if (!$row['sent_on'] instanceof \DateTime || !$row['sent_at'] instanceof \DateTime) {
+                throw new \RuntimeException('Invalid payroll record date format');
+            }
             return [
                 'id' => $row['id'],
                 'sent_on' => $row['sent_on']->setTimezone(AppTime::timezone())->format('Y-m-d'),
@@ -87,6 +88,8 @@ final class PayrollViewerController
             return $response->withStatus(303)->withHeader('Location', '/payrolls');
         }
         $fileName = basename($record['original_file_name']);
+        // Remove characters that could break header syntax
+        $fileName = str_replace(['"', "\r", "\n"], '', $fileName);
         $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $fileName, rawurlencode($fileName));
         $response->getBody()->write($data);
         return $response
