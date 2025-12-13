@@ -17,6 +17,7 @@ final class EmailOtpService
     private int $ttlSeconds;
     private int $maxAttempts;
     private int $lockSeconds;
+    private int $length;
     private string $brand;
 
     public function __construct(?Repository $repository = null, ?Mailer $mailer = null)
@@ -26,6 +27,7 @@ final class EmailOtpService
         $this->ttlSeconds = $this->sanitizePositiveInt($_ENV['EMAIL_OTP_TTL_SECONDS'] ?? 600, 600, 60, 3600);
         $this->maxAttempts = $this->sanitizePositiveInt($_ENV['EMAIL_OTP_MAX_ATTEMPTS'] ?? 5, 5, 1, 20);
         $this->lockSeconds = $this->sanitizePositiveInt($_ENV['EMAIL_OTP_LOCK_SECONDS'] ?? 600, 600, 60, 3600);
+        $this->length = $this->sanitizePositiveInt($_ENV['EMAIL_OTP_LENGTH'] ?? 6, 6, 4, 10);
         $this->brand = $_ENV['APP_BRAND_NAME'] ?? 'Attendly';
     }
 
@@ -71,6 +73,10 @@ final class EmailOtpService
             ]);
         }
 
+        if (!$this->isProduction() && $this->shouldLogDebugOtp()) {
+            $this->logDebugOtp($purpose, $targetEmail, $code, $expiresAt);
+        }
+
         $this->sendVerificationMail($targetEmail, $code, $expiresAt);
 
         return [
@@ -107,8 +113,11 @@ final class EmailOtpService
             return ['ok' => false, 'reason' => 'expired'];
         }
         $normalizedToken = $this->normalizeToken($token);
-        $hashedInput = hash('sha256', $normalizedToken);
-        if ($normalizedToken === '' || !hash_equals($challenge['code_hash'], $hashedInput)) {
+        $hashedInput = '';
+        if ($normalizedToken !== '' && strlen($normalizedToken) === $this->length) {
+            $hashedInput = hash('sha256', $normalizedToken);
+        }
+        if ($hashedInput === '' || !hash_equals($challenge['code_hash'], $hashedInput)) {
             $updated = $this->repository->incrementEmailOtpFailure((int)$challenge['id'], $this->maxAttempts, $this->lockSeconds);
             if ($updated !== null && $updated['lock_until'] !== null && $updated['lock_until'] > $now) {
                 return ['ok' => false, 'reason' => 'locked', 'retry_at' => $updated['lock_until']];
@@ -148,10 +157,10 @@ TXT;
     private function generateCode(): string
     {
         $digits = '';
-        while (strlen($digits) < 6) {
+        while (strlen($digits) < $this->length) {
             $digits .= (string)random_int(0, 9);
         }
-        return substr($digits, 0, 6);
+        return substr($digits, 0, $this->length);
     }
 
     private function normalizeEmail(string $email): string
@@ -181,5 +190,41 @@ TXT;
     {
         $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
         return $env === 'production' || $env === 'prod';
+    }
+
+    private function shouldLogDebugOtp(): bool
+    {
+        return filter_var($_ENV['EMAIL_OTP_DEBUG_LOG'] ?? false, FILTER_VALIDATE_BOOL);
+    }
+
+    private function logDebugOtp(string $purpose, string $email, string $code, DateTimeImmutable $expiresAt): void
+    {
+        $base = dirname(__DIR__, 2) . '/storage';
+        $safePurpose = preg_replace('/[\r\n]/', '', $purpose) ?? '';
+        $safeEmail = preg_replace('/[\r\n]/', '', $email) ?? '';
+        $emailRef = $safeEmail !== '' ? substr(hash('sha256', $safeEmail), 0, 12) : 'unknown';
+        $safeCode = preg_replace('/[^0-9]/', '', $code) ?? '';
+        $line = sprintf(
+            "[%s] email_otp purpose=%s email_ref=%s code=%s expires=%s\n",
+            AppTime::now()->format(DateTimeImmutable::ATOM),
+            $safePurpose,
+            $emailRef,
+            $safeCode,
+            $expiresAt->format(DateTimeImmutable::ATOM)
+        );
+
+        // ローカル開発での視認性のため、サーバーログ（error_log）にも出す。
+        // ※ 非本番かつ EMAIL_OTP_DEBUG_LOG=true のときのみ呼ばれる。
+        error_log(rtrim($line));
+
+        if (!is_dir($base) && !mkdir($base, 0775, true) && !is_dir($base)) {
+            error_log('email_otp_debug.log write skipped: storage directory not available');
+            return;
+        }
+
+        $result = file_put_contents($base . '/email_otp_debug.log', $line, FILE_APPEND | LOCK_EX);
+        if ($result === false) {
+            error_log('email_otp_debug.log write failed');
+        }
     }
 }

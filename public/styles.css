@@ -527,6 +527,10 @@ body.menu-open {
   flex-wrap: wrap;
 }
 
+.register-name-inline {
+  gap: 0.6rem;
+}
+
 .form-field-inline label {
   flex: 1 1 160px;
 }

@@ -1,3 +1,7 @@
+<?php
+  $otpLen = isset($emailOtpLength) && is_numeric($emailOtpLength) ? (int)$emailOtpLength : 6;
+  $otpLen = max(4, min(10, $otpLen));
+?>
 <div class="auth-container">
   <section class="card auth-card">
     <h2>従業員アカウント登録</h2>
@@ -5,7 +9,7 @@
       事前にテナント管理者から発行されたロールコードが必要です。半角英数字（A-Z, 0-9）のみ入力可能です。
     </p>
     <p class="form-note">
-      テナントによっては、登録前にメールアドレスへ送信される 6 桁の確認コードを入力します。
+      テナントによっては、登録後にメールアドレスへ送信される <?= $e((string)$otpLen) ?> 桁の確認コードを入力して登録を完了します。
     </p>
     <?php if (!empty($roleCodeValue)): ?>
       <p class="form-note">共有リンクからアクセスしたため、ロールコードが自動入力されています。</p>
@@ -28,7 +32,7 @@
         >
       </label>
 
-      <div class="form-field form-field-inline">
+      <div class="form-field form-field-inline register-name-inline">
         <label for="lastName">
           <span>姓</span>
           <input type="text" id="lastName" name="lastName" required autocomplete="family-name" maxlength="64">
@@ -41,18 +45,6 @@
 
       <label class="form-field" for="email">メールアドレス
         <input type="email" id="email" name="email" required autocomplete="email" maxlength="254">
-      </label>
-
-      <label class="form-field" for="verificationCode">確認コード（6桁・必要な場合のみ）
-        <input
-          type="text"
-          id="verificationCode"
-          name="verificationCode"
-          inputmode="numeric"
-          pattern="[0-9]{6}"
-          maxlength="6"
-          autocomplete="one-time-code"
-        >
       </label>
 
       <label class="form-field" for="password">パスワード

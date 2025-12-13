@@ -73,6 +73,28 @@ final class Repository
         ];
     }
 
+    /**
+     * @return array{id:int,email:string,first_name:?string,last_name:?string,tenant_id:?int}|null
+     */
+    public function findUserProfile(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, email, first_name, last_name, tenant_id FROM users WHERE id = ? LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'email' => (string)$row['email'],
+            'first_name' => $row['first_name'] !== null ? (string)$row['first_name'] : null,
+            'last_name' => $row['last_name'] !== null ? (string)$row['last_name'] : null,
+            'tenant_id' => $row['tenant_id'] !== null ? (int)$row['tenant_id'] : null,
+        ];
+    }
+
     public function recordLoginFailure(int $userId): void
     {
         $stmt = $this->pdo->prepare('UPDATE users SET failed_attempts = failed_attempts + 1 WHERE id = ?');
@@ -136,8 +158,14 @@ final class Repository
 
     public function updateUserStatus(int $userId, string $status): void
     {
-        $stmt = $this->pdo->prepare('UPDATE users SET status = ? WHERE id = ?');
-        $stmt->execute([$status, $userId]);
+        $now = AppTime::now();
+        if ($status === 'active') {
+            $stmt = $this->pdo->prepare('UPDATE users SET status = ?, deactivated_at = NULL WHERE id = ?');
+            $stmt->execute([$status, $userId]);
+            return;
+        }
+        $stmt = $this->pdo->prepare('UPDATE users SET status = ?, deactivated_at = ? WHERE id = ?');
+        $stmt->execute([$status, $this->formatDateTime($now), $userId]);
     }
 
     public function resetLoginFailures(int $userId): void
@@ -237,6 +265,12 @@ final class Repository
             'verified_at' => AppTime::fromStorage($row['verified_at']),
             'last_used_at' => AppTime::fromStorage($row['last_used_at']),
         ];
+    }
+
+    public function deleteMfaMethodsByUserAndType(int $userId, string $type): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM user_mfa_methods WHERE user_id = ? AND type = ?');
+        $stmt->execute([$userId, $type]);
     }
 
     /**
@@ -523,6 +557,18 @@ final class Repository
              WHERE id = ?'
         );
         $stmt->execute([$passwordHash, $userId]);
+    }
+
+    public function updateUserEmail(int $userId, string $email): void
+    {
+        $normalized = strtolower(trim($email));
+        if ($normalized === '' || mb_strlen($normalized, 'UTF-8') > 320 || !filter_var($normalized, FILTER_VALIDATE_EMAIL)) {
+            throw new \InvalidArgumentException('無効なメールアドレスです。');
+        }
+        $stmt = $this->pdo->prepare(
+            'UPDATE users SET email = ? WHERE id = ?'
+        );
+        $stmt->execute([$normalized, $userId]);
     }
 
     /**
@@ -829,6 +875,32 @@ final class Repository
     }
 
     /**
+     * 管理者が開始/終了を指定して勤務記録を追加する。
+     *
+     * @return array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,archived_at:?DateTimeImmutable}
+     */
+    public function createWorkSessionWithEnd(int $userId, DateTimeImmutable $start, DateTimeImmutable $end): array
+    {
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO work_sessions (user_id, start_time, end_time, archived_at, created_at)
+             VALUES (?, ?, ?, NULL, ?)'
+        );
+        $stmt->execute([
+            $userId,
+            $this->formatDateTime($start),
+            $this->formatDateTime($end),
+            $this->formatDateTime($now),
+        ]);
+        $id = (int)$this->pdo->lastInsertId();
+        $found = $this->findWorkSessionById($id);
+        if ($found === null) {
+            throw new RuntimeException('作成した打刻レコードを取得できませんでした。');
+        }
+        return $found;
+    }
+
+    /**
      * @return array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,archived_at:?DateTimeImmutable}|null
      */
     public function closeWorkSession(int $sessionId, DateTimeImmutable $end): ?array
@@ -838,6 +910,122 @@ final class Repository
         );
         $stmt->execute([$this->formatDateTime($end), $sessionId]);
         return $this->findWorkSessionById($sessionId);
+    }
+
+    public function updateWorkSessionTimes(int $sessionId, DateTimeImmutable $start, ?DateTimeImmutable $end): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE work_sessions SET start_time = ?, end_time = ? WHERE id = ?');
+        $stmt->execute([
+            $this->formatDateTime($start),
+            $end ? $this->formatDateTime($end) : null,
+            $sessionId,
+        ]);
+    }
+
+    public function deleteWorkSession(int $sessionId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM work_sessions WHERE id = ?');
+        $stmt->execute([$sessionId]);
+    }
+
+    /**
+     * 勤務記録の重複判定（管理者編集用）。
+     */
+    public function hasOverlappingWorkSessions(int $userId, DateTimeImmutable $start, ?DateTimeImmutable $end, ?int $excludeSessionId = null): bool
+    {
+        $sql = 'SELECT 1 FROM work_sessions WHERE user_id = :userId AND archived_at IS NULL';
+        $params = [
+            ':userId' => $userId,
+            ':start' => $this->formatDateTime($start),
+        ];
+        if ($excludeSessionId !== null) {
+            $sql .= ' AND id <> :excludeId';
+            $params[':excludeId'] = $excludeSessionId;
+        }
+        if ($end !== null) {
+            $sql .= ' AND start_time < :end AND (end_time IS NULL OR end_time > :start)';
+            $params[':end'] = $this->formatDateTime($end);
+        } else {
+            $sql .= ' AND (end_time IS NULL OR end_time > :start)';
+        }
+        $sql .= ' LIMIT 1';
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
+    }
+
+    /**
+     * 指定期間と重なる勤務記録を取得する（集計/重複判定向け）。
+     *
+     * @return array<int, array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,archived_at:?DateTimeImmutable}>
+     */
+    public function listWorkSessionsByUserOverlapping(int $userId, DateTimeImmutable $start, DateTimeImmutable $end): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, start_time, end_time, archived_at
+             FROM work_sessions
+             WHERE user_id = :user_id
+               AND archived_at IS NULL
+               AND start_time < :end
+               AND (end_time IS NULL OR end_time > :start)
+             ORDER BY start_time ASC'
+        );
+        $stmt->execute([
+            ':user_id' => $userId,
+            ':start' => $this->formatDateTime($start),
+            ':end' => $this->formatDateTime($end),
+        ]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'user_id' => (int)$row['user_id'],
+                'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+                'end_time' => AppTime::fromStorage($row['end_time']),
+                'archived_at' => AppTime::fromStorage($row['archived_at']),
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * 指定期間と重なる勤務記録をテナント単位で取得する（集計向け / N+1対策）。
+     *
+     * @return array<int, array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable}>
+     */
+    public function listWorkSessionsByTenantOverlapping(int $tenantId, DateTimeImmutable $start, DateTimeImmutable $end): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT ws.id, ws.user_id, ws.start_time, ws.end_time
+             FROM work_sessions ws
+             INNER JOIN users u ON ws.user_id = u.id
+             WHERE u.tenant_id = :tenant_id
+               AND u.role = :role
+               AND u.status = :status
+               AND ws.archived_at IS NULL
+               AND ws.start_time < :end
+               AND (ws.end_time IS NULL OR ws.end_time > :start)
+             ORDER BY ws.user_id ASC, ws.start_time ASC'
+        );
+        $stmt->execute([
+            ':tenant_id' => $tenantId,
+            ':role' => 'employee',
+            ':status' => 'active',
+            ':start' => $this->formatDateTime($start),
+            ':end' => $this->formatDateTime($end),
+        ]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'user_id' => (int)$row['user_id'],
+                'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+                'end_time' => AppTime::fromStorage($row['end_time']),
+            ];
+        }
+        return $result;
     }
 
     /**
@@ -1159,6 +1347,38 @@ final class Repository
     }
 
     /**
+     * 有効/無効を含む従業員一覧を取得する。
+     *
+     * @return array<int, array{id:int,username:string,email:string,status:string,deactivated_at:?DateTimeImmutable}>
+     */
+    public function listEmployeesByTenantIncludingInactive(int $tenantId, int $limit = 500): array
+    {
+        $limit = max(1, min(500, $limit));
+        $stmt = $this->pdo->prepare(
+            'SELECT id, username, email, status, deactivated_at
+             FROM users
+             WHERE tenant_id = ? AND role = "employee"
+             ORDER BY id ASC
+             LIMIT ?'
+        );
+        $stmt->bindValue(1, $tenantId, PDO::PARAM_INT);
+        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'username' => (string)$row['username'],
+                'email' => (string)$row['email'],
+                'status' => (string)$row['status'],
+                'deactivated_at' => AppTime::fromStorage($row['deactivated_at']),
+            ];
+        }
+        return $result;
+    }
+
+    /**
      * @return array{id:int,name:?string,status:string,require_employee_email_verification:bool}|null
      */
     public function findTenantById(int $id): ?array
@@ -1180,6 +1400,12 @@ final class Repository
             'status' => (string)$row['status'],
             'require_employee_email_verification' => (bool)$row['require_employee_email_verification'],
         ];
+    }
+
+    public function updateTenantRegistrationSettings(int $tenantId, bool $requireEmailVerification): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE tenants SET require_employee_email_verification = ? WHERE id = ?');
+        $stmt->execute([$requireEmailVerification ? 1 : 0, $tenantId]);
     }
 
     public function createPasswordResetToken(int $userId, string $tokenHash, DateTimeImmutable $expiresAt): void

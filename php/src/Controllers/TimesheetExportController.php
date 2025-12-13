@@ -82,6 +82,70 @@ final class TimesheetExportController
         return $this->deliverCsv($response, $export['path'], $export['filename'], true);
     }
 
+    public function exportMonthlyFromDashboard(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        if (!$this->isValidCsrf($request)) {
+            Flash::add('error', 'CSRFトークンが無効です。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        try {
+            $admin = $this->requireAdmin($request);
+        } catch (\Throwable) {
+            Flash::add('error', '権限がありません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        $data = (array)$request->getParsedBody();
+        $employeeId = isset($data['userId']) ? (int)$data['userId'] : (int)($data['user_id'] ?? 0);
+        $year = (int)($data['year'] ?? 0);
+        $month = (int)($data['month'] ?? 0);
+
+        if ($employeeId <= 0) {
+            Flash::add('error', '従業員を選択してください。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        if ($year < 2000 || $year > 2100 || $month < 1 || $month > 12) {
+            Flash::add('error', '出力対象の年月が正しくありません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        $employee = $this->repository->findUserById($employeeId);
+        if (
+            $employee === null
+            || ($employee['role'] ?? '') !== 'employee'
+            || (int)$employee['tenant_id'] !== $admin['tenant_id']
+        ) {
+            Flash::add('error', '対象の従業員が見つかりません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        if (($employee['status'] ?? '') !== 'active') {
+            Flash::add('error', '無効化された従業員のデータはエクスポートできません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        $monthStart = new \DateTimeImmutable(
+            sprintf('%04d-%02d-01 00:00:00', $year, $month),
+            AppTime::timezone()
+        );
+        $monthEndExclusive = $monthStart->modify('+1 month');
+        $monthEnd = $monthEndExclusive->modify('-1 second');
+
+        try {
+            $result = $this->service->export([
+                'tenant_id' => $admin['tenant_id'],
+                'start' => $monthStart,
+                'end' => $monthEnd,
+                'user_id' => $employeeId,
+                'timezone' => $_ENV['APP_TIMEZONE'] ?? 'Asia/Tokyo',
+            ]);
+        } catch (\Throwable) {
+            Flash::add('error', 'エクスポートに失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        return $this->deliverCsvForDashboard($response, $result['path'], $result['filename']);
+    }
+
     /**
      * @return array{id:int,tenant_id:int,email:string,role:string}
      */
@@ -92,7 +156,7 @@ final class TimesheetExportController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || ($user['role'] ?? '') !== 'admin') {
+        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
             throw new \RuntimeException('権限がありません。');
         }
         if ($user['tenant_id'] === null) {
@@ -203,6 +267,33 @@ final class TimesheetExportController
             $body->write($content);
         }
 
+        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $filename, rawurlencode($filename));
+        return $response
+            ->withHeader('Content-Type', 'text/csv; charset=utf-8')
+            ->withHeader('Content-Disposition', $disposition);
+    }
+
+    private function deliverCsvForDashboard(ResponseInterface $response, string $path, string $filename): ResponseInterface
+    {
+        $allowedDir = realpath(dirname(__DIR__, 2) . '/storage/exports');
+        $actualPath = realpath($path);
+        if ($allowedDir === false || $actualPath === false || !str_starts_with($actualPath, $allowedDir . DIRECTORY_SEPARATOR)) {
+            Flash::add('error', 'エクスポートファイルのパス検証に失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        if (!is_file($actualPath) || !is_readable($actualPath)) {
+            Flash::add('error', 'エクスポートファイルの読み込みに失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        $content = file_get_contents($actualPath);
+        if ($content === false) {
+            Flash::add('error', 'エクスポートファイルの読み込みに失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        $body = $response->getBody();
+        if ($content !== '') {
+            $body->write($content);
+        }
         $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $filename, rawurlencode($filename));
         return $response
             ->withHeader('Content-Type', 'text/csv; charset=utf-8')

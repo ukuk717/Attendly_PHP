@@ -21,6 +21,15 @@ final class CsrfToken
         }
         return $_SESSION[self::SESSION_KEY];
     }
+
+    public static function verify(string $provided): bool
+    {
+        $provided = (string)$provided;
+        if ($provided === '') {
+            return false;
+        }
+        return hash_equals(self::getToken(), $provided);
+    }
 }
 
 /**

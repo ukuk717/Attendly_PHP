@@ -20,6 +20,7 @@ final class RegisterController
 {
     private int $minPasswordLength;
     private PasswordPolicy $passwordPolicy;
+    private int $emailOtpLength;
     private Repository $repository;
     private EmailOtpService $emailOtpService;
 
@@ -31,6 +32,9 @@ final class RegisterController
             $this->minPasswordLength = 8; // セキュリティ下限
         }
         $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength);
+        $rawOtpLength = $_ENV['EMAIL_OTP_LENGTH'] ?? 6;
+        $this->emailOtpLength = filter_var($rawOtpLength, FILTER_VALIDATE_INT) ?: 6;
+        $this->emailOtpLength = max(4, min(10, $this->emailOtpLength));
         $this->repository = $repository ?? new Repository();
         $this->emailOtpService = $emailOtpService ?? new EmailOtpService($this->repository);
     }
@@ -52,6 +56,7 @@ final class RegisterController
             'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'roleCodeValue' => $roleCode,
             'minPasswordLength' => $this->minPasswordLength,
+            'emailOtpLength' => $this->emailOtpLength,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -64,7 +69,6 @@ final class RegisterController
         $lastName = trim((string)($data['lastName'] ?? ''));
         $firstName = trim((string)($data['firstName'] ?? ''));
         $email = strtolower(trim((string)($data['email'] ?? '')));
-        $verificationCode = trim((string)($data['verificationCode'] ?? ''));
         $password = (string)($data['password'] ?? '');
 
         $errors = [];
@@ -79,9 +83,6 @@ final class RegisterController
         }
         if ($email === '' || mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = '有効なメールアドレスを入力してください。';
-        }
-        if ($verificationCode !== '' && !preg_match('/^[0-9]{6}$/', $verificationCode)) {
-            $errors[] = '確認コードは6桁の数字で入力してください。';
         }
         if (mb_strlen($password, 'UTF-8') > 128) {
             $errors[] = 'パスワードが長すぎます。128文字以内で入力してください。';
@@ -232,63 +233,13 @@ final class RegisterController
             Flash::add('error', '登録処理中にエラーが発生しました。時間をおいて再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/register');
         }
-
-        $verificationSucceeded = false;
-        $verifyReason = null;
-        if ($verificationCode !== '') {
-            $verify = $this->emailOtpService->verify('employee_register', $userId, $email, $verificationCode);
-            if ($verify['ok']) {
-                $verificationSucceeded = true;
-            } elseif (($verify['reason'] ?? '') === 'locked' && isset($verify['retry_at'])) {
-                Flash::add('error', '試行回数の上限に達しました。しばらく待ってからお試しください。');
-                return $response->withStatus(303)->withHeader('Location', '/register');
-            }
-            $verifyReason = $verify['reason'] ?? null;
+        try {
+            $this->emailOtpService->issue('employee_register', $userId, $email, $roleCodeRow['tenant_id'], $roleCodeRow['id']);
+        } catch (\Throwable $e) {
+            Flash::add('error', '確認コードの送信に失敗しました。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/register');
         }
-
-        if ($verificationSucceeded) {
-            $pdo = $this->repository->getPdo();
-            $started = false;
-            if (!$pdo->inTransaction()) {
-                $pdo->beginTransaction();
-                $started = true;
-            }
-            try {
-                $this->repository->updateUserStatus($userId, 'active');
-                $this->repository->deleteEmailOtpRequests(['user_id' => $userId, 'purpose' => 'employee_register']);
-                $this->repository->incrementRoleCodeWithLimit($roleCodeRow['id']);
-                if ($started) {
-                    $pdo->commit();
-                }
-            } catch (\Throwable $e) {
-                if ($started && $pdo->inTransaction()) {
-                    $pdo->rollBack();
-                }
-                Flash::add('error', '登録処理中にエラーが発生しました。時間をおいて再度お試しください。');
-                return $response->withStatus(303)->withHeader('Location', '/register');
-            }
-            Flash::add('success', '登録が完了しました。ログインしてください。');
-            return $response->withStatus(303)->withHeader('Location', '/login');
-        }
-
-        $shouldIssue = $verificationCode === '' || $verifyReason === 'expired' || $verifyReason === 'not_found' || $verifyReason === null;
-        if ($verificationCode !== '' && !$verificationSucceeded) {
-            if ($verifyReason === 'expired') {
-                Flash::add('error', '確認コードの有効期限が切れています。新しいコードを送信しました。');
-            } elseif ($verifyReason === 'invalid_code' || $verifyReason === 'not_found') {
-                Flash::add('error', '確認コードが一致しません。必要に応じて再送してください。');
-            }
-        }
-
-        if ($shouldIssue) {
-            try {
-                $this->emailOtpService->issue('employee_register', $userId, $email, $roleCodeRow['tenant_id'], $roleCodeRow['id']);
-            } catch (\Throwable $e) {
-                Flash::add('error', '確認コードの送信に失敗しました。時間をおいて再度お試しください。');
-                return $response->withStatus(303)->withHeader('Location', '/register');
-            }
-            Flash::add('info', '確認コードを送信しました。メールを確認し、コードを入力してください。');
-        }
+        Flash::add('info', '確認コードを送信しました。メールを確認し、コードを入力してください。');
 
         $_SESSION['pending_registration'] = [
             'user_id' => $userId,

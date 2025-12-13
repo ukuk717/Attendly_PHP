@@ -94,7 +94,28 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!window.confirm(message)) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        return;
       }
+
+      const confirmField = element.getAttribute('data-confirm-field');
+      if (!confirmField) {
+        return;
+      }
+      const confirmValue = element.getAttribute('data-confirm-value') || '1';
+      const form = element.form || null;
+      if (!form) {
+        return;
+      }
+      const existing = form.querySelector(`input[type="hidden"][name="${confirmField}"]`);
+      if (existing) {
+        existing.value = confirmValue;
+        return;
+      }
+      const hidden = document.createElement('input');
+      hidden.type = 'hidden';
+      hidden.name = confirmField;
+      hidden.value = confirmValue;
+      form.appendChild(hidden);
     });
   });
 });

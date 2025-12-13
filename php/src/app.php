@@ -29,6 +29,10 @@ use Attendly\Controllers\DashboardController;
 use Attendly\Controllers\PayrollViewerController;
 use Attendly\Controllers\WorkSessionController;
 use Attendly\Controllers\MfaSettingsController;
+use Attendly\Controllers\AccountController;
+use Attendly\Controllers\AdminEmployeesController;
+use Attendly\Controllers\AdminSessionsController;
+use Attendly\Controllers\AdminTenantSettingsController;
 use Attendly\Support\AppTime;
 
 function create_app(): \Slim\App
@@ -177,10 +181,37 @@ function create_app(): \Slim\App
     $app->get('/admin/payslips/send', [$payslipController, 'showForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/payslips/send', [$payslipController, 'sendFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
+    // Admin employee management / sessions / tenant settings
+    $adminEmployees = new AdminEmployeesController();
+    $app->post('/admin/employees/{userId}/status', [$adminEmployees, 'updateStatus'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/mfa/reset', [$adminEmployees, 'resetMfa'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    $adminSessions = new AdminSessionsController($view);
+    $app->get('/admin/employees/{userId}/sessions', [$adminSessions, 'show'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/sessions', [$adminSessions, 'add'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/sessions/{sessionId}/update', [$adminSessions, 'update'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/admin/employees/{userId}/sessions/{sessionId}/delete/confirm', [$adminSessions, 'confirmDelete'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/sessions/{sessionId}/delete', [$adminSessions, 'delete'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    $adminTenantSettings = new AdminTenantSettingsController();
+    $app->post('/admin/settings/email-verification', [$adminTenantSettings, 'updateEmailVerification'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    $app->post('/admin/export', [$timesheetExport, 'exportMonthlyFromDashboard'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
     $app->get('/dashboard', [$dashboard, 'show'])->add(new RequireAuthMiddleware());
     $app->post('/work-sessions/punch', [$workSessions, 'toggle'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls', [$payrollViewer, 'index'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls/{id}/download', [$payrollViewer, 'download'])->add(new RequireAuthMiddleware());
+
+    $account = new AccountController($view);
+    $app->get('/account', [$account, 'show'])->add(new RequireAuthMiddleware());
+    $app->get('/account/password', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        return $response->withStatus(303)->withHeader('Location', '/account');
+    })->add(new RequireAuthMiddleware());
+    $app->post('/account/profile', [$account, 'updateProfile'])->add(new RequireAuthMiddleware());
+    $app->post('/account/password', [$account, 'changePassword'])->add(new RequireAuthMiddleware());
+    $app->post('/account/email/request', [$account, 'requestEmailChange'])->add(new RequireAuthMiddleware());
+    $app->post('/account/email/verify', [$account, 'verifyEmailChange'])->add(new RequireAuthMiddleware());
 
     $mfaSettings = new MfaSettingsController($view);
     $app->get('/settings/mfa', [$mfaSettings, 'show'])->add(new RequireAuthMiddleware());

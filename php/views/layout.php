@@ -9,6 +9,18 @@
     $csrfToken = $csrf;
     $isAuthed = !empty($currentUser);
     $isAdmin = $isAuthed && (($currentUser['role'] ?? '') === 'admin' || ($currentUser['role'] ?? '') === 'tenant_admin');
+    $displayName = '';
+    if ($isAuthed && is_array($currentUser)) {
+        $displayName = trim((string)($currentUser['name'] ?? ''));
+        if ($displayName === '') {
+            $last = trim((string)($currentUser['last_name'] ?? ''));
+            $first = trim((string)($currentUser['first_name'] ?? ''));
+            $displayName = trim($last . ' ' . $first);
+        }
+        if ($displayName === '') {
+            $displayName = trim((string)($currentUser['email'] ?? ''));
+        }
+    }
   ?>
   <?php include __DIR__ . '/_partials/head.php'; ?>
 </head>
@@ -36,8 +48,9 @@
         <?php else: ?>
           <a href="/payrolls" class="nav-link">給与明細</a>
         <?php endif; ?>
+        <a href="/account" class="nav-link">アカウント設定</a>
         <a href="/settings/mfa" class="nav-link">MFA設定</a>
-        <span class="nav-user"><?= $e($currentUser['email'] ?? '') ?></span>
+        <span class="nav-user"><?= $e($displayName) ?></span>
         <form id="logout-form" method="post" action="/logout" class="nav-form">
           <input type="hidden" name="csrf_token" value="<?= $e($csrfToken) ?>">
           <button type="submit" class="btn secondary">ログアウト</button>

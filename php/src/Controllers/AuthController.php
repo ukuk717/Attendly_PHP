@@ -78,7 +78,7 @@ final class AuthController
         }
 
         if ($result['user']) {
-            $allowedRoles = ['admin', 'user', 'manager', 'guest'];
+            $allowedRoles = ['admin', 'tenant_admin', 'employee'];
             $role = $result['user']['role'] ?? null;
             if ($role !== null && !in_array($role, $allowedRoles, true)) {
                 Flash::add('error', '無効なロールが検出されました。');

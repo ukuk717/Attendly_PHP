@@ -144,7 +144,7 @@ final class PayslipController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || ($user['role'] ?? '') !== 'admin') {
+        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
             throw new \RuntimeException('権限がありません。');
         }
         if ($user['tenant_id'] === null) {

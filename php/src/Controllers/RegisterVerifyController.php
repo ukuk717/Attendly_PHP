@@ -17,10 +17,15 @@ use Psr\Http\Message\ServerRequestInterface;
 
 final class RegisterVerifyController
 {
+    private int $emailOtpLength;
+
     public function __construct(private View $view, private ?Repository $repository = null, private ?EmailOtpService $emailOtpService = null)
     {
         $this->repository = $this->repository ?? new Repository();
         $this->emailOtpService = $this->emailOtpService ?? new EmailOtpService($this->repository);
+        $rawOtpLength = $_ENV['EMAIL_OTP_LENGTH'] ?? 6;
+        $this->emailOtpLength = filter_var($rawOtpLength, FILTER_VALIDATE_INT) ?: 6;
+        $this->emailOtpLength = max(4, min(10, $this->emailOtpLength));
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -44,6 +49,7 @@ final class RegisterVerifyController
             'currentUser' => $request->getAttribute('currentUser'),
             'brandName' => $brand,
             'email' => $email,
+            'emailOtpLength' => $this->emailOtpLength,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -80,8 +86,8 @@ final class RegisterVerifyController
             return $response->withStatus(429)->withHeader('Location', $this->buildVerifyLocation($email));
         }
 
-        if (!preg_match('/^[0-9]{6}$/', $token)) {
-            Flash::add('error', '確認コードは6桁の数字で入力してください。');
+        if (!preg_match('/^[0-9]{' . $this->emailOtpLength . '}$/', $token)) {
+            Flash::add('error', "確認コードは{$this->emailOtpLength}桁の数字で入力してください。");
             return $response->withStatus(303)->withHeader('Location', $this->buildVerifyLocation($email));
         }
 

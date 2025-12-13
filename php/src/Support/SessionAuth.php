@@ -10,6 +10,7 @@ final class SessionAuth
     private const PENDING_MFA_KEY = '_pending_mfa';
     private const PENDING_TOTP_KEY = '_pending_totp';
     private const RECOVERY_CODES_KEY = '_mfa_recovery_codes';
+    private const PENDING_EMAIL_CHANGE_KEY = '_pending_email_change';
     private const AUTH_TIME_KEY = '_auth_time';
 
     /**
@@ -49,6 +50,7 @@ final class SessionAuth
         unset($_SESSION[self::PENDING_MFA_KEY]);
         unset($_SESSION[self::PENDING_TOTP_KEY]);
         unset($_SESSION[self::RECOVERY_CODES_KEY]);
+        unset($_SESSION[self::PENDING_EMAIL_CHANGE_KEY]);
         unset($_SESSION[self::AUTH_TIME_KEY]);
     }
 
@@ -169,6 +171,49 @@ final class SessionAuth
     public static function clearPendingTotpSecret(): void
     {
         unset($_SESSION[self::PENDING_TOTP_KEY]);
+    }
+
+    public static function setPendingEmailChange(string $email, int $ttlSeconds): void
+    {
+        $normalized = strtolower(trim($email));
+        if ($normalized === '' || !filter_var($normalized, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+        $ttl = max(60, $ttlSeconds);
+        $_SESSION[self::PENDING_EMAIL_CHANGE_KEY] = [
+            'email' => $normalized,
+            'expires_at' => time() + $ttl,
+        ];
+    }
+
+    /**
+     * @return array{email:string,expires_at:?int}|null
+     */
+    public static function getPendingEmailChange(): ?array
+    {
+        $pending = $_SESSION[self::PENDING_EMAIL_CHANGE_KEY] ?? null;
+        if (!is_array($pending) || empty($pending['email'])) {
+            return null;
+        }
+        $email = strtolower(trim((string)$pending['email']));
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            self::clearPendingEmailChange();
+            return null;
+        }
+        $expiresAt = isset($pending['expires_at']) ? (int)$pending['expires_at'] : 0;
+        if ($expiresAt > 0 && time() > $expiresAt) {
+            self::clearPendingEmailChange();
+            return null;
+        }
+        return [
+            'email' => $email,
+            'expires_at' => $expiresAt > 0 ? $expiresAt : null,
+        ];
+    }
+
+    public static function clearPendingEmailChange(): void
+    {
+        unset($_SESSION[self::PENDING_EMAIL_CHANGE_KEY]);
     }
 
     /**
