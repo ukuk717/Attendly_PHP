@@ -118,7 +118,7 @@ CREATE TABLE user_mfa_methods (
   verified_at DATETIME(3),
   last_used_at DATETIME(3),
   created_at DATETIME(3) NOT NULL,
-  updated_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY user_mfa_methods_user_type_unique (user_id, type),
   KEY user_mfa_methods_user_verified_idx (user_id, is_verified),
@@ -148,6 +148,22 @@ CREATE TABLE user_mfa_trusted_devices (
   PRIMARY KEY (id),
   UNIQUE KEY user_mfa_trusted_devices_token_unique (token_hash),
   CONSTRAINT user_mfa_trusted_devices_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE user_active_sessions (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED NOT NULL,
+  -- session_hash stores sha256(session_key) for single-session enforcement (never store raw tokens).
+  session_hash VARCHAR(64) NOT NULL,
+  last_login_at DATETIME(3) NOT NULL,
+  last_login_ip VARCHAR(64),
+  last_login_ua VARCHAR(512),
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY user_active_sessions_user_unique (user_id),
+  KEY user_active_sessions_user_updated_idx (user_id, updated_at),
+  CONSTRAINT user_active_sessions_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tenant_admin_mfa_reset_logs (

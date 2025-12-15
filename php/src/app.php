@@ -18,6 +18,7 @@ use Attendly\Controllers\MfaLoginController;
 use Attendly\Security\RequireAdminMiddleware;
 use Attendly\Security\RequireAuthMiddleware;
 use Attendly\Middleware\CurrentUserMiddleware;
+use Attendly\Security\SessionConcurrencyMiddleware;
 use Attendly\Controllers\RegisterController;
 use Attendly\Controllers\PasswordResetController;
 use Attendly\Controllers\PasswordResetUpdateController;
@@ -33,7 +34,9 @@ use Attendly\Controllers\AccountController;
 use Attendly\Controllers\AdminEmployeesController;
 use Attendly\Controllers\AdminSessionsController;
 use Attendly\Controllers\AdminTenantSettingsController;
+use Attendly\Controllers\PlatformTenantsController;
 use Attendly\Support\AppTime;
+use Attendly\Security\RequirePlatformMiddleware;
 
 function create_app(): \Slim\App
 {
@@ -56,6 +59,9 @@ function create_app(): \Slim\App
 
     // Attach current user to request attributes for views
     $app->add(new CurrentUserMiddleware());
+
+    // 同時ログイン制御（単一セッション）。SlimのミドルウェアはLIFOのため、CurrentUserより後に追加して先に実行する。
+    $app->add(new SessionConcurrencyMiddleware());
 
     $app->get('/health', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
         $response->getBody()->write('ok');
@@ -198,6 +204,12 @@ function create_app(): \Slim\App
 
     $app->post('/admin/export', [$timesheetExport, 'exportMonthlyFromDashboard'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
+    // Platform (tenant admin MFA reset/rollback)
+    $platformTenants = new PlatformTenantsController($view);
+    $app->get('/platform/tenants', [$platformTenants, 'show'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/tenant-admins/{userId}/mfa/reset', [$platformTenants, 'resetTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/tenant-admins/{userId}/mfa/rollback', [$platformTenants, 'rollbackTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+
     $app->get('/dashboard', [$dashboard, 'show'])->add(new RequireAuthMiddleware());
     $app->post('/work-sessions/punch', [$workSessions, 'toggle'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls', [$payrollViewer, 'index'])->add(new RequireAuthMiddleware());
@@ -215,7 +227,9 @@ function create_app(): \Slim\App
 
     $mfaSettings = new MfaSettingsController($view);
     $app->get('/settings/mfa', [$mfaSettings, 'show'])->add(new RequireAuthMiddleware());
+    $app->post('/settings/mfa/totp/setup/reset', [$mfaSettings, 'resetTotpSetup'])->add(new RequireAuthMiddleware());
     $app->post('/settings/mfa/totp/verify', [$mfaSettings, 'verifyTotp'])->add(new RequireAuthMiddleware());
+    $app->post('/settings/mfa/totp/disable', [$mfaSettings, 'disableTotp'])->add(new RequireAuthMiddleware());
     $app->post('/settings/mfa/recovery-codes/regenerate', [$mfaSettings, 'regenerateRecoveryCodes'])->add(new RequireAuthMiddleware());
     $app->post('/settings/mfa/trusted-devices/revoke', [$mfaSettings, 'revokeTrustedDevices'])->add(new RequireAuthMiddleware());
 

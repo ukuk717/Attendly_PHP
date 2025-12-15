@@ -32,12 +32,12 @@
         >
       </label>
 
-      <div class="form-field form-field-inline register-name-inline">
-        <label for="lastName">
+      <div class="form-field-inline register-name-inline">
+        <label class="form-field" for="lastName">
           <span>姓</span>
           <input type="text" id="lastName" name="lastName" required autocomplete="family-name" maxlength="64">
         </label>
-        <label for="firstName">
+        <label class="form-field" for="firstName">
           <span>名</span>
           <input type="text" id="firstName" name="firstName" required autocomplete="given-name" maxlength="64">
         </label>

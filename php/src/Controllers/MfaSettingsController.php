@@ -10,6 +10,7 @@ use Attendly\Support\Flash;
 use Attendly\Support\Mfa;
 use Attendly\Support\SessionAuth;
 use Attendly\View;
+use chillerlan\QRCode\QRCode;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -36,13 +37,28 @@ final class MfaSettingsController
                 $pendingSecret = Mfa::generateTotpSecret();
                 SessionAuth::setPendingTotpSecret($pendingSecret);
             }
-            $issuer = $_ENV['APP_BRAND_NAME'] ?? 'Attendly';
-            $totpUri = Mfa::buildTotpUri($pendingSecret, (string)($user['email'] ?? 'user'), $issuer);
+            $alreadyShown = SessionAuth::hasShownPendingTotpSecret();
+            if (!$alreadyShown) {
+                $issuer = $_ENV['APP_BRAND_NAME'] ?? 'Attendly';
+                $totpUri = Mfa::buildTotpUri($pendingSecret, (string)($user['email'] ?? 'user'), $issuer);
+                SessionAuth::markPendingTotpSecretShown();
+            } else {
+                $pendingSecret = null;
+                $totpUri = null;
+            }
         }
 
         $newRecoveryCodes = SessionAuth::consumeRecoveryCodesForDisplay();
         $hasRecoveryCodes = $this->repository->hasActiveRecoveryCodes($userId);
         $totpDigits = $this->getTotpDigits();
+        $totpQrSrc = null;
+        if ($totpUri !== null && $totpUri !== '') {
+            try {
+                $totpQrSrc = (new QRCode())->render($totpUri);
+            } catch (\Throwable) {
+                $totpQrSrc = null;
+            }
+        }
 
         $html = $this->view->renderWithLayout('settings_mfa', [
             'title' => '多要素認証の設定',
@@ -52,6 +68,8 @@ final class MfaSettingsController
             'totpVerified' => $verifiedTotp !== null,
             'pendingSecret' => $pendingSecret,
             'totpUri' => $totpUri,
+            'totpQrSrc' => $totpQrSrc,
+            'totpSetupHidden' => $verifiedTotp === null && SessionAuth::hasShownPendingTotpSecret() && ($pendingSecret === null),
             'newRecoveryCodes' => $newRecoveryCodes,
             'hasRecoveryCodes' => $hasRecoveryCodes,
             'totpDigits' => $totpDigits,
@@ -103,6 +121,73 @@ final class MfaSettingsController
         SessionAuth::setRecoveryCodesForDisplay($codes);
 
         Flash::add('success', '認証アプリを有効化しました。バックアップコードを安全な場所に保管してください。');
+        return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+    }
+
+    public function resetTotpSetup(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $user = $request->getAttribute('currentUser');
+        if (!is_array($user) || empty($user['id'])) {
+            return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        $body = (array)$request->getParsedBody();
+        if (!CsrfToken::verify((string)($body['csrf_token'] ?? ''))) {
+            Flash::add('error', '無効なリクエストです。もう一度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+        }
+        $verified = $this->repository->findVerifiedMfaMethodByType((int)$user['id'], 'totp');
+        if ($verified !== null) {
+            Flash::add('info', '認証アプリはすでに有効です。');
+            return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+        }
+        SessionAuth::resetPendingTotpSetup();
+        Flash::add('success', '認証アプリのセットアップをやり直します。');
+        return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+    }
+
+    public function disableTotp(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $user = $request->getAttribute('currentUser');
+        if (!is_array($user) || empty($user['id'])) {
+            return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        $body = (array)$request->getParsedBody();
+        if (!CsrfToken::verify((string)($body['csrf_token'] ?? ''))) {
+            Flash::add('error', '無効なリクエストです。もう一度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+        }
+        $reauthRedirect = $this->enforceRecentAuthentication($response);
+        if ($reauthRedirect !== null) {
+            return $reauthRedirect;
+        }
+
+        $userId = (int)$user['id'];
+        $verified = $this->repository->findVerifiedMfaMethodByType($userId, 'totp');
+        if ($verified === null) {
+            Flash::add('info', '認証アプリはまだ有効化されていません。');
+            return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+        }
+
+        $confirmed = strtolower(trim((string)($body['confirmed'] ?? '')));
+        if ($confirmed !== 'yes') {
+            Flash::add('error', '無効化を実行するには確認にチェックしてください。');
+            return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+        }
+
+        try {
+            $this->repository->beginTransaction();
+            $this->repository->deleteMfaMethodsByUserAndType($userId, 'totp');
+            $this->repository->deleteRecoveryCodesByUser($userId);
+            $this->repository->deleteTrustedDevicesByUser($userId);
+            $this->repository->commit();
+        } catch (\Throwable) {
+            $this->repository->rollback();
+            Flash::add('error', '認証アプリの無効化に失敗しました。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
+        }
+
+        SessionAuth::clearPendingTotpSecret();
+        Flash::add('success', '認証アプリを無効化しました。');
         return $response->withStatus(303)->withHeader('Location', '/settings/mfa');
     }
 

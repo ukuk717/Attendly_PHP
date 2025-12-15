@@ -511,6 +511,468 @@ final class Repository
     }
 
     /**
+     * @return array<int, array{
+     *   id:int,
+     *   username:string,
+     *   email:string,
+     *   phone_number:?string,
+     *   tenant_id:?int,
+     *   tenant_name:?string,
+     *   tenant_uid:?string,
+     *   status:string
+     * }>
+     */
+    public function listTenantAdminsForPlatform(int $limit = 200, int $offset = 0): array
+    {
+        $limit = max(1, min(1000, $limit));
+        $offset = max(0, $offset);
+        $stmt = $this->pdo->prepare(
+            'SELECT u.id, u.username, u.email, u.phone_number, u.tenant_id, u.status,
+                    t.name AS tenant_name, t.tenant_uid AS tenant_uid
+             FROM users u
+             LEFT JOIN tenants t ON u.tenant_id = t.id
+             WHERE u.role = "tenant_admin"
+              ORDER BY u.id ASC
+              LIMIT ? OFFSET ?'
+        );
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'username' => (string)$row['username'],
+                'email' => (string)$row['email'],
+                'phone_number' => $row['phone_number'] !== null ? (string)$row['phone_number'] : null,
+                'tenant_id' => $row['tenant_id'] !== null ? (int)$row['tenant_id'] : null,
+                'tenant_name' => $row['tenant_name'] !== null ? (string)$row['tenant_name'] : null,
+                'tenant_uid' => $row['tenant_uid'] !== null ? (string)$row['tenant_uid'] : null,
+                'status' => (string)$row['status'],
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * @return array{id:int,tenant_id:?int,username:string,email:string,role:string,status:string}|null
+     */
+    public function findTenantAdminById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, tenant_id, username, email, role, status
+             FROM users
+             WHERE id = ? AND role = "tenant_admin"
+             LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'tenant_id' => $row['tenant_id'] !== null ? (int)$row['tenant_id'] : null,
+            'username' => (string)$row['username'],
+            'email' => (string)$row['email'],
+            'role' => (string)$row['role'],
+            'status' => (string)$row['status'],
+        ];
+    }
+
+    /**
+     * @return array{
+     *   secret:?string,
+     *   config_json:?string,
+     *   verified_at:?string,
+     *   last_used_at:?string,
+     *   created_at:?string,
+     *   updated_at:?string
+     * }|null
+     */
+    public function findVerifiedMfaMethodRawByType(int $userId, string $type): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT secret, config_json, verified_at, last_used_at, created_at, updated_at
+             FROM user_mfa_methods
+             WHERE user_id = ? AND type = ? AND is_verified = 1
+             LIMIT 1'
+        );
+        $stmt->execute([$userId, $type]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'secret' => $row['secret'] !== null ? (string)$row['secret'] : null,
+            'config_json' => $row['config_json'] !== null ? (string)$row['config_json'] : null,
+            'verified_at' => $row['verified_at'] !== null ? (string)$row['verified_at'] : null,
+            'last_used_at' => $row['last_used_at'] !== null ? (string)$row['last_used_at'] : null,
+            'created_at' => $row['created_at'] !== null ? (string)$row['created_at'] : null,
+            'updated_at' => $row['updated_at'] !== null ? (string)$row['updated_at'] : null,
+        ];
+    }
+
+    public function restoreTotpMethodFromSnapshot(int $userId, array $snapshot): void
+    {
+        $secret = isset($snapshot['secret']) ? (string)$snapshot['secret'] : '';
+        if ($secret === '') {
+            return;
+        }
+        $configJson = $snapshot['config_json'] ?? null;
+        $configJson = is_string($configJson) ? $configJson : null;
+        $verifiedAt = $snapshot['verified_at'] ?? null;
+        $verifiedAt = is_string($verifiedAt) ? $verifiedAt : null;
+        $lastUsedAt = $snapshot['last_used_at'] ?? null;
+        $lastUsedAt = is_string($lastUsedAt) ? $lastUsedAt : null;
+        $createdAt = $snapshot['created_at'] ?? null;
+        $createdAt = is_string($createdAt) ? $createdAt : null;
+        $updatedAt = $snapshot['updated_at'] ?? null;
+        $updatedAt = is_string($updatedAt) ? $updatedAt : null;
+
+        $now = $this->formatDateTime(AppTime::now());
+        $stmt = $this->pdo->prepare('DELETE FROM user_mfa_methods WHERE user_id = ? AND type = "totp"');
+        $stmt->execute([$userId]);
+
+        $insert = $this->pdo->prepare(
+            'INSERT INTO user_mfa_methods (user_id, type, secret, config_json, is_verified, verified_at, last_used_at, created_at, updated_at)
+             VALUES (?, "totp", ?, ?, 1, ?, ?, ?, ?)'
+        );
+        $insert->execute([
+            $userId,
+            $secret,
+            $configJson,
+            $verifiedAt ?? $now,
+            $lastUsedAt,
+            $createdAt ?? $now,
+            $updatedAt ?? $now,
+        ]);
+    }
+
+    /**
+     * @return array<int, array{code_hash:string,used_at:?string,created_at:?string}>
+     */
+    public function listRecoveryCodesRawByUser(int $userId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT code_hash, used_at, created_at
+             FROM user_mfa_recovery_codes
+             WHERE user_id = ?
+             ORDER BY id ASC'
+        );
+        $stmt->execute([$userId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'code_hash' => (string)$row['code_hash'],
+                'used_at' => $row['used_at'] !== null ? (string)$row['used_at'] : null,
+                'created_at' => $row['created_at'] !== null ? (string)$row['created_at'] : null,
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * @return array{session_hash:string,last_login_at:DateTimeImmutable,last_login_ip:?string,last_login_ua:?string}|null
+     */
+    public function findUserActiveSession(int $userId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT session_hash, last_login_at, last_login_ip, last_login_ua
+             FROM user_active_sessions
+             WHERE user_id = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'session_hash' => (string)$row['session_hash'],
+            'last_login_at' => AppTime::fromStorage((string)$row['last_login_at']) ?? AppTime::now(),
+            'last_login_ip' => $row['last_login_ip'] !== null ? (string)$row['last_login_ip'] : null,
+            'last_login_ua' => $row['last_login_ua'] !== null ? (string)$row['last_login_ua'] : null,
+        ];
+    }
+
+    public function upsertUserActiveSession(int $userId, string $sessionHash, ?string $loginIp, ?string $loginUa): void
+    {
+        $sessionHash = trim($sessionHash);
+        if ($sessionHash === '' || strlen($sessionHash) !== 64) {
+            throw new \InvalidArgumentException('無効なセッションハッシュです。');
+        }
+        $ip = $loginIp !== null ? trim($loginIp) : null;
+        if ($ip !== null && mb_strlen($ip, 'UTF-8') > 64) {
+            $ip = mb_substr($ip, 0, 64, 'UTF-8');
+        }
+        $ua = $loginUa !== null ? trim($loginUa) : null;
+        if ($ua !== null) {
+            $ua = preg_replace('/[\r\n]/', ' ', $ua) ?? '';
+            $ua = trim($ua);
+            if ($ua !== '' && mb_strlen($ua, 'UTF-8') > 512) {
+                $ua = mb_substr($ua, 0, 512, 'UTF-8');
+            }
+            if ($ua === '') {
+                $ua = null;
+            }
+        }
+
+        $now = $this->formatDateTime(AppTime::now());
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO user_active_sessions (user_id, session_hash, last_login_at, last_login_ip, last_login_ua, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               session_hash = VALUES(session_hash),
+               last_login_at = VALUES(last_login_at),
+               last_login_ip = VALUES(last_login_ip),
+               last_login_ua = VALUES(last_login_ua),
+               updated_at = VALUES(updated_at)'
+        );
+        $stmt->execute([
+            $userId,
+            $sessionHash,
+            $now,
+            $ip,
+            $ua,
+            $now,
+            $now,
+        ]);
+    }
+
+    public function deleteUserActiveSession(int $userId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM user_active_sessions WHERE user_id = ?');
+        $stmt->execute([$userId]);
+    }
+
+    public function beginTransaction(): void
+    {
+        if ($this->pdo->inTransaction()) {
+            return;
+        }
+        $this->pdo->beginTransaction();
+    }
+
+    public function commit(): void
+    {
+        if (!$this->pdo->inTransaction()) {
+            return;
+        }
+        $this->pdo->commit();
+    }
+
+    public function rollback(): void
+    {
+        if (!$this->pdo->inTransaction()) {
+            return;
+        }
+        $this->pdo->rollBack();
+    }
+
+    /**
+     * @param int[] $userIds
+     * @return array<int, true> userId => true
+     */
+    public function mapUserIdsWithVerifiedMfaType(array $userIds, string $type): array
+    {
+        $ids = [];
+        foreach ($userIds as $id) {
+            $intId = (int)$id;
+            if ($intId > 0) {
+                $ids[$intId] = true;
+            }
+        }
+        if ($ids === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = "SELECT user_id FROM user_mfa_methods WHERE user_id IN ({$placeholders}) AND type = ? AND is_verified = 1";
+        $stmt = $this->pdo->prepare($sql);
+        $params = array_keys($ids);
+        $params[] = $type;
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            if (isset($row['user_id'])) {
+                $result[(int)$row['user_id']] = true;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * @param int[] $userIds
+     * @return array<int, array{id:int,reason:string,previous_method_json:?string,previous_recovery_codes_json:?string,created_at:DateTimeImmutable,rolled_back_at:?DateTimeImmutable,rollback_reason:?string}>
+     */
+    public function mapLatestTenantAdminMfaResetLogsByUser(array $userIds): array
+    {
+        $ids = [];
+        foreach ($userIds as $id) {
+            $intId = (int)$id;
+            if ($intId > 0) {
+                $ids[$intId] = true;
+            }
+        }
+        if ($ids === []) {
+            return [];
+        }
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $sql = "SELECT l.target_user_id, l.id, l.reason, l.previous_method_json, l.previous_recovery_codes_json, l.created_at, l.rolled_back_at, l.rollback_reason
+                FROM tenant_admin_mfa_reset_logs l
+                INNER JOIN (
+                  SELECT target_user_id, MAX(id) AS max_id
+                  FROM tenant_admin_mfa_reset_logs
+                  WHERE target_user_id IN ({$placeholders})
+                  GROUP BY target_user_id
+                ) latest ON latest.target_user_id = l.target_user_id AND latest.max_id = l.id";
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute(array_keys($ids));
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $userId = isset($row['target_user_id']) ? (int)$row['target_user_id'] : 0;
+            if ($userId <= 0) {
+                continue;
+            }
+            $result[$userId] = [
+                'id' => (int)$row['id'],
+                'reason' => (string)$row['reason'],
+                'previous_method_json' => $row['previous_method_json'] !== null ? (string)$row['previous_method_json'] : null,
+                'previous_recovery_codes_json' => $row['previous_recovery_codes_json'] !== null ? (string)$row['previous_recovery_codes_json'] : null,
+                'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+                'rolled_back_at' => AppTime::fromStorage($row['rolled_back_at']),
+                'rollback_reason' => $row['rollback_reason'] !== null ? (string)$row['rollback_reason'] : null,
+            ];
+        }
+        return $result;
+    }
+
+    public function countTenantAdminsForPlatform(): int
+    {
+        $stmt = $this->pdo->query('SELECT COUNT(*) AS c FROM users WHERE role = "tenant_admin"');
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || !isset($row['c'])) {
+            return 0;
+        }
+        return (int)$row['c'];
+    }
+
+    /**
+     * @param array<int, array{code_hash:string,used_at:?string,created_at:?string}> $snapshot
+     */
+    public function restoreRecoveryCodesFromSnapshot(int $userId, array $snapshot): void
+    {
+        $started = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $started = true;
+        }
+        try {
+            $delete = $this->pdo->prepare('DELETE FROM user_mfa_recovery_codes WHERE user_id = ?');
+            $delete->execute([$userId]);
+            if ($snapshot !== []) {
+                $now = $this->formatDateTime(AppTime::now());
+                $insert = $this->pdo->prepare(
+                    'INSERT INTO user_mfa_recovery_codes (user_id, code_hash, used_at, created_at) VALUES (?, ?, ?, ?)'
+                );
+                foreach ($snapshot as $row) {
+                    if (!is_array($row) || empty($row['code_hash'])) {
+                        continue;
+                    }
+                    $createdAt = isset($row['created_at']) && is_string($row['created_at']) ? $row['created_at'] : $now;
+                    $usedAt = isset($row['used_at']) && is_string($row['used_at']) ? $row['used_at'] : null;
+                    $insert->execute([$userId, (string)$row['code_hash'], $usedAt, $createdAt]);
+                }
+            }
+            if ($started) {
+                $this->pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($started && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * @return array{id:int,reason:string,previous_method_json:?string,previous_recovery_codes_json:?string,created_at:DateTimeImmutable,rolled_back_at:?DateTimeImmutable,rollback_reason:?string}|null
+     */
+    public function getLatestTenantAdminMfaResetLog(int $targetUserId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, reason, previous_method_json, previous_recovery_codes_json, created_at, rolled_back_at, rollback_reason
+             FROM tenant_admin_mfa_reset_logs
+             WHERE target_user_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1'
+        );
+        $stmt->execute([$targetUserId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'reason' => (string)$row['reason'],
+            'previous_method_json' => $row['previous_method_json'] !== null ? (string)$row['previous_method_json'] : null,
+            'previous_recovery_codes_json' => $row['previous_recovery_codes_json'] !== null ? (string)$row['previous_recovery_codes_json'] : null,
+            'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+            'rolled_back_at' => AppTime::fromStorage($row['rolled_back_at']),
+            'rollback_reason' => $row['rollback_reason'] !== null ? (string)$row['rollback_reason'] : null,
+        ];
+    }
+
+    public function createTenantAdminMfaResetLog(
+        int $targetUserId,
+        int $performedByUserId,
+        string $reason,
+        ?string $previousMethodPayload,
+        ?string $previousRecoveryPayload
+    ): int {
+        $reason = trim($reason);
+        if ($reason === '') {
+            throw new \InvalidArgumentException('理由が必要です。');
+        }
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO tenant_admin_mfa_reset_logs (target_user_id, performed_by_user_id, reason, previous_method_json, previous_recovery_codes_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $targetUserId,
+            $performedByUserId,
+            $reason,
+            $previousMethodPayload,
+            $previousRecoveryPayload,
+            $this->formatDateTime(AppTime::now()),
+        ]);
+        return (int)$this->pdo->lastInsertId();
+    }
+
+    public function markTenantAdminMfaResetRolledBack(int $logId, string $rollbackReason, int $rolledBackByUserId): void
+    {
+        $rollbackReason = trim($rollbackReason);
+        if ($rollbackReason === '') {
+            throw new \InvalidArgumentException('取消理由が必要です。');
+        }
+        $stmt = $this->pdo->prepare(
+            'UPDATE tenant_admin_mfa_reset_logs
+             SET rolled_back_at = ?, rolled_back_by_user_id = ?, rollback_reason = ?
+             WHERE id = ? AND rolled_back_at IS NULL'
+        );
+        $stmt->execute([
+            $this->formatDateTime(AppTime::now()),
+            $rolledBackByUserId,
+            $rollbackReason,
+            $logId,
+        ]);
+    }
+
+    /**
      * @param string[] $hashes
      */
     public function replaceRecoveryCodes(int $userId, array $hashes): void

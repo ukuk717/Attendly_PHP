@@ -36,6 +36,9 @@ final class DashboardController
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
         $role = (string)($currentUser['role'] ?? 'employee');
+        if ($role === 'admin' && empty($currentUser['tenant_id'])) {
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
         if ($role === 'tenant_admin' || $role === 'admin') {
             return $this->renderTenantAdmin($request, $response, $currentUser);
         }

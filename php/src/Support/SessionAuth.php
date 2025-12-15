@@ -7,8 +7,10 @@ namespace Attendly\Support;
 final class SessionAuth
 {
     private const USER_KEY = '_user';
+    private const SESSION_KEY = '_session_key';
     private const PENDING_MFA_KEY = '_pending_mfa';
     private const PENDING_TOTP_KEY = '_pending_totp';
+    private const PENDING_TOTP_SHOWN_KEY = '_pending_totp_shown';
     private const RECOVERY_CODES_KEY = '_mfa_recovery_codes';
     private const PENDING_EMAIL_CHANGE_KEY = '_pending_email_change';
     private const AUTH_TIME_KEY = '_auth_time';
@@ -25,6 +27,25 @@ final class SessionAuth
             'tenant_id' => isset($user['tenant_id']) ? (int)$user['tenant_id'] : null,
         ];
         $_SESSION[self::AUTH_TIME_KEY] = time();
+    }
+
+    public static function setSessionKey(string $key): void
+    {
+        $key = trim($key);
+        if ($key === '') {
+            return;
+        }
+        $_SESSION[self::SESSION_KEY] = $key;
+    }
+
+    public static function getSessionKey(): ?string
+    {
+        $value = $_SESSION[self::SESSION_KEY] ?? null;
+        if (!is_string($value)) {
+            return null;
+        }
+        $value = trim($value);
+        return $value !== '' ? $value : null;
     }
 
     /**
@@ -47,6 +68,7 @@ final class SessionAuth
     public static function clear(): void
     {
         unset($_SESSION[self::USER_KEY]);
+        unset($_SESSION[self::SESSION_KEY]);
         unset($_SESSION[self::PENDING_MFA_KEY]);
         unset($_SESSION[self::PENDING_TOTP_KEY]);
         unset($_SESSION[self::RECOVERY_CODES_KEY]);
@@ -106,7 +128,16 @@ final class SessionAuth
             return null;
         }
         $createdAt = isset($pending['created_at']) ? (int)$pending['created_at'] : 0;
-        $maxAge = (int)($_ENV['MFA_LOGIN_SESSION_TTL'] ?? 900);
+        $maxAgeRaw = $_ENV['MFA_LOGIN_SESSION_TTL'] ?? 900;
+        $maxAge = filter_var($maxAgeRaw, FILTER_VALIDATE_INT, ['options' => ['default' => 900]]);
+        if ($maxAge === false) {
+            $maxAge = 900;
+        }
+        if ($maxAge > 0) {
+            $maxAge = max(60, min(3600, (int)$maxAge));
+        } else {
+            $maxAge = 0;
+        }
         if ($maxAge > 0 && time() - $createdAt > $maxAge) {
             self::clearPendingMfa();
             return null;
@@ -152,6 +183,7 @@ final class SessionAuth
             'secret' => $secret,
             'created_at' => time(),
         ];
+        unset($_SESSION[self::PENDING_TOTP_SHOWN_KEY]);
     }
 
     public static function getPendingTotpSecret(): ?string
@@ -160,7 +192,16 @@ final class SessionAuth
         if (!is_array($pending) || empty($pending['secret'])) {
             return null;
         }
-        $ttl = (int)($_ENV['MFA_TOTP_PENDING_TTL'] ?? 600);
+        $ttlRaw = $_ENV['MFA_TOTP_PENDING_TTL'] ?? 600;
+        $ttl = filter_var($ttlRaw, FILTER_VALIDATE_INT, ['options' => ['default' => 600]]);
+        if ($ttl === false) {
+            $ttl = 600;
+        }
+        if ($ttl > 0) {
+            $ttl = max(60, min(3600, (int)$ttl));
+        } else {
+            $ttl = 0;
+        }
         if ($ttl > 0 && isset($pending['created_at']) && (time() - (int)$pending['created_at']) > $ttl) {
             self::clearPendingTotpSecret();
             return null;
@@ -168,9 +209,34 @@ final class SessionAuth
         return (string)$pending['secret'];
     }
 
+    public static function hasShownPendingTotpSecret(): bool
+    {
+        $secret = self::getPendingTotpSecret();
+        if ($secret === null) {
+            unset($_SESSION[self::PENDING_TOTP_SHOWN_KEY]);
+            return false;
+        }
+        return !empty($_SESSION[self::PENDING_TOTP_SHOWN_KEY]);
+    }
+
+    public static function markPendingTotpSecretShown(): void
+    {
+        $secret = self::getPendingTotpSecret();
+        if ($secret === null) {
+            return;
+        }
+        $_SESSION[self::PENDING_TOTP_SHOWN_KEY] = time();
+    }
+
     public static function clearPendingTotpSecret(): void
     {
         unset($_SESSION[self::PENDING_TOTP_KEY]);
+        unset($_SESSION[self::PENDING_TOTP_SHOWN_KEY]);
+    }
+
+    public static function resetPendingTotpSetup(): void
+    {
+        self::clearPendingTotpSecret();
     }
 
     public static function setPendingEmailChange(string $email, int $ttlSeconds): void

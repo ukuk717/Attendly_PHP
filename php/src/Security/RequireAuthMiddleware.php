@@ -17,7 +17,9 @@ final class RequireAuthMiddleware implements MiddlewareInterface
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         if (SessionAuth::getUser() === null) {
-            Flash::add('error', 'ログインしてください。');
+            if (!Flash::hasType('error')) {
+                Flash::add('error', 'ログインしてください。');
+            }
             $response = new Response(303);
             return $response->withHeader('Location', '/login');
         }

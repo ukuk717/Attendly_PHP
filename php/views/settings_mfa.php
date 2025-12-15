@@ -7,14 +7,49 @@
   <h3>認証アプリ（OTP）</h3>
   <?php if (!empty($totpVerified)): ?>
     <p class="form-note success">認証アプリは有効です。</p>
+    <form method="post" action="/settings/mfa/totp/disable" class="form">
+      <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+      <label class="form-checkbox">
+        <input type="checkbox" name="confirmed" value="yes" required>
+        <span>認証アプリを無効化する（バックアップコードと信頼済みデバイスも無効化されます）</span>
+      </label>
+      <button type="submit" class="btn danger">認証アプリを無効化</button>
+    </form>
   <?php else: ?>
-    <?php if (!empty($pendingSecret)): ?>
-      <p class="form-note">以下のシークレットを認証アプリに登録し、<?= $totpDigits ?>桁コードで確認してください。</p>
-      <div class="code-block"><?= $e($pendingSecret) ?></div>
-      <?php if (!empty($totpUri)): ?>
-        <div class="code-block small"><?= $e($totpUri) ?></div>
-      <?php endif; ?>
-      <form method="post" action="/settings/mfa/totp/verify" class="form">
+    <?php if (!empty($totpSetupHidden)): ?>
+      <p class="form-note">
+        セキュリティのため、登録用QRコードとシークレットの表示は一度のみです。
+        もう一度表示するには、セットアップをやり直してください。
+      </p>
+      <form method="post" action="/settings/mfa/totp/setup/reset" class="form">
+        <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+        <button type="submit" class="btn secondary">セットアップをやり直す</button>
+      </form>
+    <?php elseif (!empty($pendingSecret)): ?>
+      <p class="form-note">認証アプリでQRコードを読み取り、<?= $e($totpDigits) ?>桁コードで確認してください。</p>
+      <div class="mfa-setup">
+        <div class="mfa-setup__qr">
+          <?php if (!empty($totpQrSrc)): ?>
+            <img src="<?= $e((string)$totpQrSrc) ?>" alt="認証アプリ登録用QRコード">
+          <?php else: ?>
+            <p class="form-note error">QRコードを生成できませんでした。下の情報を手動で登録してください。</p>
+          <?php endif; ?>
+        </div>
+        <div class="mfa-setup__details">
+          <div>
+            <p class="form-note">シークレット</p>
+            <div class="code-block"><?= $e((string)$pendingSecret) ?></div>
+          </div>
+          <?php if (!empty($totpUri)): ?>
+            <div>
+              <p class="form-note">登録用URI</p>
+              <div class="code-block small"><?= $e((string)$totpUri) ?></div>
+            </div>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <form method="post" action="/settings/mfa/totp/verify" class="form mfa-verify-form">
         <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
         <label class="form-field">
           <span>認証コード</span>

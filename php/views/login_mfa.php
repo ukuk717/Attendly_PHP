@@ -22,14 +22,14 @@
             name="token"
             inputmode="numeric"
             pattern="[0-9]*"
-            maxlength="<?= $e((string)($_ENV['MFA_TOTP_DIGITS'] ?? 6)) ?>"
+            maxlength="<?= $e((string)($totpDigits ?? 6)) ?>"
             autocomplete="one-time-code"
             <?= !empty($totpState['isLocked']) ? 'disabled' : 'required' ?>
           >
         </label>
         <label class="form-checkbox">
           <input type="checkbox" name="remember_device" value="on" <?= !empty($totpState['isLocked']) ? 'disabled' : '' ?>>
-          <span><?= $e((string)($_ENV['MFA_TRUST_TTL_DAYS'] ?? 30)) ?>日間このデバイスを信頼する（共有端末では選択しないでください）</span>
+          <span><?= $e((string)($trustTtlDays ?? 30)) ?>日間このデバイスを信頼する（共有端末では選択しないでください）</span>
         </label>
         <button type="submit" class="btn primary" <?= !empty($totpState['isLocked']) ? 'disabled' : '' ?>>認証する</button>
       </form>
@@ -89,7 +89,7 @@
         </label>
         <label class="form-checkbox">
           <input type="checkbox" name="remember_device" value="on" <?= !empty($state['isLocked']) ? 'disabled' : '' ?>>
-          <span><?= $e((string)($_ENV['MFA_TRUST_TTL_DAYS'] ?? 30)) ?>日間このデバイスを信頼する（共有端末では選択しないでください）</span>
+          <span><?= $e((string)($trustTtlDays ?? 30)) ?>日間このデバイスを信頼する（共有端末では選択しないでください）</span>
         </label>
         <button type="submit" class="btn primary" <?= !empty($state['isLocked']) ? 'disabled' : '' ?>>認証する</button>
       </form>

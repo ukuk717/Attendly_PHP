@@ -10,3 +10,5 @@ issues.md
 php/storage/
 lolipop_server_spec.html
 docs/plan/
+vendor/
+php/vendor/

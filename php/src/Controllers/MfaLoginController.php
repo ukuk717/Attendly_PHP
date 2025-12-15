@@ -79,8 +79,10 @@ final class MfaLoginController
             'totpAvailable' => $totpMethod !== null,
             'totpState' => $totpState,
             'otpLength' => $this->otpLength,
+            'totpDigits' => $this->totpDigits,
             'hasRecovery' => $hasRecovery,
             'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
+            'trustTtlDays' => $this->trustTtlDays,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -410,6 +412,12 @@ final class MfaLoginController
      */
     private function completeLogin(array $pending, ResponseInterface $response, bool $rememberDevice = false, ?ServerRequestInterface $request = null): ResponseInterface
     {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+
+        $sessionKey = bin2hex(random_bytes(32));
+        SessionAuth::setSessionKey($sessionKey);
         SessionAuth::setUser([
             'id' => $pending['user']['id'],
             'email' => $pending['user']['email'],
@@ -417,6 +425,32 @@ final class MfaLoginController
             'tenant_id' => $pending['user']['tenant_id'],
         ]);
         SessionAuth::clearPendingMfa();
+
+        $loginIp = null;
+        if ($request !== null) {
+            try {
+                $loginIp = ClientIpResolver::resolve($request);
+            } catch (\Throwable) {
+                $loginIp = null;
+            }
+        }
+        $loginUa = null;
+        if ($request !== null) {
+            $loginUa = $this->sanitizeUserAgentForAudit((string)$request->getHeaderLine('User-Agent'));
+        }
+        $sessionHash = hash('sha256', $sessionKey);
+        try {
+            $this->repository->upsertUserActiveSession((int)$pending['user']['id'], $sessionHash, $loginIp, $loginUa);
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '42S02') {
+                error_log('[auth] user_active_sessions table missing; concurrent login control is disabled until schema is applied');
+            } else {
+                error_log('[auth] failed to upsert user_active_sessions on login');
+            }
+        } catch (\Throwable) {
+            error_log('[auth] failed to upsert user_active_sessions on login');
+        }
+
         Flash::add('success', 'ログインしました。');
         if ($rememberDevice) {
             $token = bin2hex(random_bytes(32));
@@ -424,8 +458,8 @@ final class MfaLoginController
             $expires = AppTime::now()->modify('+' . $this->trustTtlDays . ' days');
             $deviceInfo = null;
             if ($request !== null) {
-                $ua = substr((string)$request->getHeaderLine('User-Agent'), 0, 250);
-                $deviceInfo = $ua !== '' ? $ua : null;
+                $ua = $this->sanitizeUserAgentForTrustedDevice((string)$request->getHeaderLine('User-Agent'));
+                $deviceInfo = $ua !== null ? $ua : null;
             }
             $record = $this->repository->findTrustedDeviceByHash((int)$pending['user']['id'], $hash);
             if ($record === null) {
@@ -435,6 +469,29 @@ final class MfaLoginController
             $response = $response->withHeader('Set-Cookie', $cookie);
         }
         return $response->withStatus(303)->withHeader('Location', '/dashboard');
+    }
+
+    private function sanitizeUserAgentForAudit(string $ua): ?string
+    {
+        return $this->sanitizeUserAgentWithMaxLen($ua, 512);
+    }
+
+    private function sanitizeUserAgentForTrustedDevice(string $ua): ?string
+    {
+        return $this->sanitizeUserAgentWithMaxLen($ua, 250);
+    }
+
+    private function sanitizeUserAgentWithMaxLen(string $ua, int $maxLen): ?string
+    {
+        $ua = preg_replace('/[\r\n]/', ' ', $ua) ?? '';
+        $ua = trim($ua);
+        if ($ua === '') {
+            return null;
+        }
+        if ($maxLen > 0 && mb_strlen($ua, 'UTF-8') > $maxLen) {
+            $ua = mb_substr($ua, 0, $maxLen, 'UTF-8');
+        }
+        return $ua;
     }
 
     private function sanitizeInt(int|string $value, int $default, int $min, int $max): int

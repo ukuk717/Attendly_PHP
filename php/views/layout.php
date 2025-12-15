@@ -8,7 +8,10 @@
     }
     $csrfToken = $csrf;
     $isAuthed = !empty($currentUser);
-    $isAdmin = $isAuthed && (($currentUser['role'] ?? '') === 'admin' || ($currentUser['role'] ?? '') === 'tenant_admin');
+    $role = $isAuthed && is_array($currentUser) ? (string)($currentUser['role'] ?? '') : '';
+    $tenantId = $isAuthed && is_array($currentUser) ? ($currentUser['tenant_id'] ?? null) : null;
+    $isPlatform = $isAuthed && $role === 'admin' && $tenantId === null;
+    $isTenantAdmin = $isAuthed && in_array($role, ['admin', 'tenant_admin'], true) && $tenantId !== null;
     $displayName = '';
     if ($isAuthed && is_array($currentUser)) {
         $displayName = trim((string)($currentUser['name'] ?? ''));
@@ -41,7 +44,9 @@
       <a href="/web" class="nav-link">ホーム</a>
       <?php if ($isAuthed): ?>
         <a href="/dashboard" class="nav-link">ダッシュボード</a>
-        <?php if ($isAdmin): ?>
+        <?php if ($isPlatform): ?>
+          <a href="/platform/tenants" class="nav-link">テナント管理</a>
+        <?php elseif ($isTenantAdmin): ?>
           <a href="/admin/role-codes" class="nav-link">ロールコード管理</a>
           <a href="/admin/timesheets/export" class="nav-link">勤怠エクスポート</a>
           <a href="/admin/payslips/send" class="nav-link">給与明細送信</a>

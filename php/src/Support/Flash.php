@@ -16,6 +16,20 @@ final class Flash
         $_SESSION[self::SESSION_KEY][] = ['type' => $type, 'message' => $message];
     }
 
+    public static function hasType(string $type): bool
+    {
+        $messages = $_SESSION[self::SESSION_KEY] ?? null;
+        if (!is_array($messages)) {
+            return false;
+        }
+        foreach ($messages as $message) {
+            if (is_array($message) && ($message['type'] ?? null) === $type) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Retrieve and clear flash messages.
      *
