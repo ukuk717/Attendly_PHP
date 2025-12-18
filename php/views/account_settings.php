@@ -21,20 +21,20 @@
 
 <section class="card">
   <h3>パスワード変更</h3>
-  <p class="form-note">現在のパスワードを確認し、新しいパスワードを設定します。英字・数字・記号を含む <?= $minPasswordLength ?> 文字以上で入力してください。</p>
+  <p class="form-note">現在のパスワードを確認し、新しいパスワードを設定します。<?= $e((string)($minPasswordLength ?? 8)) ?> 文字以上で入力してください。</p>
   <form method="post" action="/account/password" class="form">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
     <label class="form-field">
       <span>現在のパスワード</span>
-      <input type="password" name="currentPassword" autocomplete="current-password" maxlength="128" required>
+      <input type="password" name="currentPassword" autocomplete="current-password" maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>" required>
     </label>
     <label class="form-field">
       <span>新しいパスワード</span>
-      <input type="password" name="newPassword" autocomplete="new-password" minlength="<?= $e((string)$minPasswordLength) ?>" maxlength="128" required>
+      <input type="password" name="newPassword" autocomplete="new-password" minlength="<?= $e((string)($minPasswordLength ?? 8)) ?>" maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>" required>
     </label>
     <label class="form-field">
       <span>新しいパスワード（確認）</span>
-      <input type="password" name="newPasswordConfirmation" autocomplete="new-password" minlength="<?= $e((string)$minPasswordLength) ?>" maxlength="128" required>
+      <input type="password" name="newPasswordConfirmation" autocomplete="new-password" minlength="<?= $e((string)($minPasswordLength ?? 8)) ?>" maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>" required>
     </label>
     <button type="submit" class="btn primary">パスワードを変更</button>
   </form>
@@ -73,4 +73,3 @@
   <?php endif; ?>
   <?php endif; ?>
 </section>
-

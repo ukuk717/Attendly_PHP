@@ -12,6 +12,7 @@ use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Slim\Psr7\Stream;
 
 final class TimesheetExportController
 {
@@ -38,7 +39,7 @@ final class TimesheetExportController
             return $export;
         }
 
-        return $this->deliverCsv($response, $export['path'], $export['filename'], false);
+        return $this->deliverExport($response, $export['path'], $export['filename'], $export['content_type'], false);
     }
 
     public function showForm(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -79,7 +80,7 @@ final class TimesheetExportController
             return $export;
         }
 
-        return $this->deliverCsv($response, $export['path'], $export['filename'], true);
+        return $this->deliverExport($response, $export['path'], $export['filename'], $export['content_type'], true);
     }
 
     public function exportMonthlyFromDashboard(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -99,6 +100,10 @@ final class TimesheetExportController
         $employeeId = isset($data['userId']) ? (int)$data['userId'] : (int)($data['user_id'] ?? 0);
         $year = (int)($data['year'] ?? 0);
         $month = (int)($data['month'] ?? 0);
+        $format = strtolower(trim((string)($data['format'] ?? 'excel')));
+        if (!in_array($format, ['excel', 'pdf', 'csv'], true)) {
+            $format = 'excel';
+        }
 
         if ($employeeId <= 0) {
             Flash::add('error', '従業員を選択してください。');
@@ -128,7 +133,15 @@ final class TimesheetExportController
             AppTime::timezone()
         );
         $monthEndExclusive = $monthStart->modify('+1 month');
+        if ($monthEndExclusive === false) {
+            Flash::add('error', '出力対象の年月が正しくありません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
         $monthEnd = $monthEndExclusive->modify('-1 second');
+        if ($monthEnd === false) {
+            Flash::add('error', '出力対象の年月が正しくありません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
 
         try {
             $result = $this->service->export([
@@ -137,13 +150,14 @@ final class TimesheetExportController
                 'end' => $monthEnd,
                 'user_id' => $employeeId,
                 'timezone' => $_ENV['APP_TIMEZONE'] ?? 'Asia/Tokyo',
+                'format' => $format,
             ]);
         } catch (\Throwable) {
             Flash::add('error', 'エクスポートに失敗しました。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
 
-        return $this->deliverCsvForDashboard($response, $result['path'], $result['filename']);
+        return $this->deliverExportForDashboard($response, $result['path'], $result['filename'], $result['content_type']);
     }
 
     /**
@@ -184,12 +198,16 @@ final class TimesheetExportController
     }
 
     /**
-     * @return array{path:string,filename:string}|ResponseInterface
+     * @return array{path:string,filename:string,content_type:string}|ResponseInterface
      */
     private function performExport(array $data, array $user, ResponseInterface $response, bool $useFlash = false): array|ResponseInterface
     {
         $startStr = trim((string)($data['start_date'] ?? ''));
         $endStr = trim((string)($data['end_date'] ?? ''));
+        $format = strtolower(trim((string)($data['format'] ?? 'excel')));
+        if (!in_array($format, ['excel', 'pdf', 'csv'], true)) {
+            $format = 'excel';
+        }
         if ($startStr === '' || $endStr === '') {
             return $useFlash
                 ? $this->flashError('開始日と終了日を入力してください。', $response)
@@ -228,6 +246,7 @@ final class TimesheetExportController
                 'end' => $end,
                 'user_id' => $userId,
                 'timezone' => $_ENV['APP_TIMEZONE'] ?? 'Asia/Tokyo',
+                'format' => $format,
             ]);
         } catch (\Throwable $e) {
             return $useFlash
@@ -238,10 +257,11 @@ final class TimesheetExportController
         return [
             'path' => $result['path'],
             'filename' => $result['filename'],
+            'content_type' => $result['content_type'],
         ];
     }
 
-    private function deliverCsv(ResponseInterface $response, string $path, string $filename, bool $useFlash): ResponseInterface
+    private function deliverExport(ResponseInterface $response, string $path, string $filename, string $contentType, bool $useFlash): ResponseInterface
     {
         $allowedDir = realpath(dirname(__DIR__, 2) . '/storage/exports');
         $actualPath = realpath($path);
@@ -255,25 +275,32 @@ final class TimesheetExportController
                 ? $this->flashError('エクスポートファイルの読み込みに失敗しました。', $response)
                 : $this->error($response, 500, 'failed_to_read_export');
         }
-        $content = file_get_contents($actualPath);
-        if ($content === false) {
+        $downloadName = basename($filename);
+        $downloadName = str_replace(['"', "\r", "\n"], '', $downloadName);
+        $handle = fopen($actualPath, 'rb');
+        if ($handle === false) {
             return $useFlash
                 ? $this->flashError('エクスポートファイルの読み込みに失敗しました。', $response)
                 : $this->error($response, 500, 'failed_to_read_export');
         }
-
-        $body = $response->getBody();
-        if ($content !== '') {
-            $body->write($content);
+        try {
+            $size = filesize($actualPath);
+            $stream = new Stream($handle);
+            $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
+            $response = $response->withBody($stream);
+        } catch (\Throwable $e) {
+            fclose($handle);
+            throw $e;
         }
-
-        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $filename, rawurlencode($filename));
+        if ($size !== false) {
+            $response = $response->withHeader('Content-Length', (string)$size);
+        }
         return $response
-            ->withHeader('Content-Type', 'text/csv; charset=utf-8')
-            ->withHeader('Content-Disposition', $disposition);
+            $validatedContentType = $this->validateContentType($contentType);
+            ->withHeader('Content-Type', $validatedContentType)
     }
 
-    private function deliverCsvForDashboard(ResponseInterface $response, string $path, string $filename): ResponseInterface
+    private function deliverExportForDashboard(ResponseInterface $response, string $path, string $filename, string $contentType): ResponseInterface
     {
         $allowedDir = realpath(dirname(__DIR__, 2) . '/storage/exports');
         $actualPath = realpath($path);
@@ -285,18 +312,27 @@ final class TimesheetExportController
             Flash::add('error', 'エクスポートファイルの読み込みに失敗しました。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
-        $content = file_get_contents($actualPath);
-        if ($content === false) {
+        $downloadName = basename($filename);
+        $downloadName = str_replace(['"', "\r", "\n"], '', $downloadName);
+        $handle = fopen($actualPath, 'rb');
+        if ($handle === false) {
             Flash::add('error', 'エクスポートファイルの読み込みに失敗しました。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
-        $body = $response->getBody();
-        if ($content !== '') {
-            $body->write($content);
+        try {
+            $size = filesize($actualPath);
+            $stream = new Stream($handle);
+            $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
+            $response = $response->withBody($stream);
+        } catch (\Throwable $e) {
+            fclose($handle);
+            throw $e;
         }
-        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $filename, rawurlencode($filename));
+        if ($size !== false) {
+            $response = $response->withHeader('Content-Length', (string)$size);
+        }
         return $response
-            ->withHeader('Content-Type', 'text/csv; charset=utf-8')
+            ->withHeader('Content-Type', $contentType)
             ->withHeader('Content-Disposition', $disposition);
     }
 

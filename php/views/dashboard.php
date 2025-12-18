@@ -9,22 +9,32 @@
     現在の状態:
     <?php 
       $formattedStartTime = 'N/A';
+      $formattedBreakStartTime = 'N/A';
       try {
-        if (isset($openSession['start_time']) && $openSession['start_time'] instanceof DateTime) {
+        if (isset($openSession['start_time']) && $openSession['start_time'] instanceof DateTimeInterface) {
           $tz = new DateTimeZone($timezone ?? 'Asia/Tokyo');
           $formattedStartTime = $openSession['start_time']->setTimezone($tz)->format('Y-m-d H:i');
         }
+        if (isset($openBreak['start_time']) && $openBreak['start_time'] instanceof DateTimeInterface) {
+          $tz = new DateTimeZone($timezone ?? 'Asia/Tokyo');
+          $formattedBreakStartTime = $openBreak['start_time']->setTimezone($tz)->format('Y-m-d H:i');
+        }
       } catch (Exception $e) {
         $formattedStartTime = '表示エラー';
+        $formattedBreakStartTime = '表示エラー';
       }
     ?>
     <?php if (!empty($openSession)): ?>
-      <strong class="status in-progress">勤務中（開始: <?= $e($formattedStartTime) ?>）</strong>
+      <?php if (!empty($openBreak)): ?>
+        <strong class="status in-progress">休憩中（休憩開始: <?= $e($formattedBreakStartTime) ?> / 勤務開始: <?= $e($formattedStartTime) ?>）</strong>
+      <?php else: ?>
+        <strong class="status in-progress">勤務中（開始: <?= $e($formattedStartTime) ?>）</strong>
+      <?php endif; ?>
     <?php else: ?>
       <strong class="status idle">待機中</strong>
     <?php endif; ?>
   </p>
-  <form method="post" action="/work-sessions/punch" class="form-inline">
+  <form method="post" action="/work-sessions/punch" class="form-inline" style="gap: 8px;">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
     <button type="submit" class="btn primary">
       <?php if (!empty($openSession)): ?>
@@ -34,6 +44,22 @@
       <?php endif; ?>
     </button>
   </form>
+
+  <?php if (!empty($openSession)): ?>
+    <form method="post" action="<?= !empty($openBreak) ? '/work-sessions/break/end' : '/work-sessions/break/start' ?>" class="form-inline" style="margin-top: 10px;">
+      <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+      <button type="submit" class="btn secondary">
+        <?php if (!empty($openBreak)): ?>
+          休憩終了を記録
+        <?php else: ?>
+          休憩開始を記録
+        <?php endif; ?>
+      </button>
+    </form>
+    <p class="form-note" style="margin-top: 8px;">勤務中のみ休憩の開始/終了を記録できます。</p>
+  <?php else: ?>
+    <p class="form-note" style="margin-top: 10px;">休憩の記録は勤務開始後に利用できます。</p>
+  <?php endif; ?>
 </section>
 
 <section class="card highlight-card">
@@ -51,22 +77,37 @@
         <tr>
           <th>日付</th>
           <th>勤務時間</th>
+          <th>注意</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($dailySummary)): ?>
-          <tr><td colspan="2">記録がありません。</td></tr>
+          <tr><td colspan="3">記録がありません。</td></tr>
         <?php else: ?>
           <?php foreach ($dailySummary as $row): ?>
             <tr>
               <td><?= $e($row['date']) ?></td>
               <td><?= $e($row['formatted']) ?></td>
+              <td>
+                <?php $shortage = (int)($row['break_shortage_minutes'] ?? 0); ?>
+                <?php $edge = !empty($row['edge_break_warning']); ?>
+                <?php if ($shortage > 0): ?>
+                  <span class="status-badge warning">休憩不足</span>
+                  <span class="muted">不足: <?= $e((string)$shortage) ?>分</span>
+                <?php elseif ($edge): ?>
+                  <span class="status-badge warning">要注意</span>
+                  <span class="muted">休憩が端に寄っています</span>
+                <?php else: ?>
+                  -
+                <?php endif; ?>
+              </td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>
       </tbody>
     </table>
   </div>
+  <p class="form-note" style="margin-top: 8px;">休憩は勤務途中に取得してください（初期は注意喚起のみで、入力の強制はしません）。</p>
 </section>
 
 <section class="card">
@@ -78,17 +119,31 @@
           <th>開始</th>
           <th>終了</th>
           <th>勤務時間</th>
+          <th>注意</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($recentSessions)): ?>
-          <tr><td colspan="3">履歴がありません。</td></tr>
+          <tr><td colspan="4">履歴がありません。</td></tr>
         <?php else: ?>
           <?php foreach ($recentSessions as $session): ?>
             <tr>
               <td><?= $e($session['start']) ?></td>
               <td><?= $e($session['end']) ?></td>
               <td><?= $e($session['duration']) ?></td>
+              <td>
+                <?php $shortage = (int)($session['break_shortage_minutes'] ?? 0); ?>
+                <?php $edge = !empty($session['edge_break_warning']); ?>
+                <?php if ($shortage > 0): ?>
+                  <span class="status-badge warning">休憩不足</span>
+                  <span class="muted">不足: <?= $e((string)$shortage) ?>分</span>
+                <?php elseif ($edge): ?>
+                  <span class="status-badge warning">要注意</span>
+                  <span class="muted">休憩が端に寄っています</span>
+                <?php else: ?>
+                  -
+                <?php endif; ?>
+              </td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>

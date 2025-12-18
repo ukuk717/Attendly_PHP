@@ -62,12 +62,13 @@
           <th id="session-start-heading">開始</th>
           <th id="session-end-heading">終了</th>
           <th>合計</th>
+          <th>休憩</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($sessions)): ?>
-          <tr><td colspan="4">対象期間の勤務記録がありません。</td></tr>
+          <tr><td colspan="5">対象期間の勤務記録がありません。</td></tr>
         <?php else: ?>
           <?php foreach ($sessions as $session): ?>
             <tr>
@@ -94,7 +95,27 @@
                   form="session-form-<?= $e((string)$session['id']) ?>"
                   aria-labelledby="session-end-heading"
                 >
+              </td>
               <td><?= $e((string)$session['formattedMinutes']) ?></td>
+              <td>
+                <?php if ($session['breakMinutes'] !== null): ?>
+                  <div class="muted">休憩: <?= $e((string)$session['breakMinutes']) ?>分</div>
+                  <?php if (!empty($session['breakShortageMinutes'])): ?>
+                    <div>
+                      <span class="status-badge warning">休憩不足</span>
+                      <span class="muted">不足: <?= $e((string)$session['breakShortageMinutes']) ?>分</span>
+                    </div>
+                  <?php endif; ?>
+                  <?php if (!empty($session['edgeBreakWarning'])): ?>
+                    <div><span class="status-badge warning">要注意</span> <span class="muted">端寄り</span></div>
+                  <?php endif; ?>
+                <?php else: ?>
+                  <div class="muted">休憩: --</div>
+                <?php endif; ?>
+                <a class="btn" href="/admin/employees/<?= $e((string)($employee['id'] ?? 0)) ?>/sessions/<?= $e((string)$session['id']) ?>/breaks<?= $e($safeQueryString) ?>">
+                  編集
+                </a>
+              </td>
               <td>
                 <div class="session-actions">
                   <button type="submit" class="btn primary" form="session-form-<?= $e((string)$session['id']) ?>">

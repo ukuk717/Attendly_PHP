@@ -7,6 +7,7 @@ namespace Attendly\Controllers;
 use Attendly\Security\CsrfToken;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
+use Attendly\Support\PasswordHasher;
 use Attendly\Support\SessionAuth;
 use Attendly\View;
 use Attendly\Database\Repository;
@@ -20,18 +21,23 @@ final class RegisterController
 {
     private int $minPasswordLength;
     private PasswordPolicy $passwordPolicy;
+    private PasswordHasher $passwordHasher;
     private int $emailOtpLength;
     private Repository $repository;
     private EmailOtpService $emailOtpService;
+    private int $maxPasswordLength;
 
     public function __construct(private View $view, ?Repository $repository = null, ?EmailOtpService $emailOtpService = null)
     {
-        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 12;
-        $this->minPasswordLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 12;
+        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 8;
+        $this->minPasswordLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 8;
         if ($this->minPasswordLength < 8) {
             $this->minPasswordLength = 8; // セキュリティ下限
         }
-        $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength);
+        $rawMax = $_ENV['MAX_PASSWORD_LENGTH'] ?? 256;
+        $this->maxPasswordLength = filter_var($rawMax, FILTER_VALIDATE_INT, ['options' => ['min_range' => 32]]) ?: 256;
+        $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength, $this->maxPasswordLength);
+        $this->passwordHasher = new PasswordHasher();
         $rawOtpLength = $_ENV['EMAIL_OTP_LENGTH'] ?? 6;
         $this->emailOtpLength = filter_var($rawOtpLength, FILTER_VALIDATE_INT) ?: 6;
         $this->emailOtpLength = max(4, min(10, $this->emailOtpLength));
@@ -56,6 +62,7 @@ final class RegisterController
             'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'roleCodeValue' => $roleCode,
             'minPasswordLength' => $this->minPasswordLength,
+            'maxPasswordLength' => $this->maxPasswordLength,
             'emailOtpLength' => $this->emailOtpLength,
         ]);
         $response->getBody()->write($html);
@@ -83,9 +90,6 @@ final class RegisterController
         }
         if ($email === '' || mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors[] = '有効なメールアドレスを入力してください。';
-        }
-        if (mb_strlen($password, 'UTF-8') > 128) {
-            $errors[] = 'パスワードが長すぎます。128文字以内で入力してください。';
         }
         $policyResult = $this->passwordPolicy->validate($password);
         if (!$policyResult['ok']) {
@@ -133,8 +137,9 @@ final class RegisterController
 
         $existingUser = $this->repository->findUserByEmail($email);
         $username = $this->buildUsername($lastName, $firstName);
-        $passwordHash = password_hash($password, PASSWORD_DEFAULT);
-        if ($passwordHash === false) {
+        try {
+            $passwordHash = $this->passwordHasher->hash($password);
+        } catch (\Throwable) {
             Flash::add('error', 'パスワードの処理中にエラーが発生しました。');
             return $response->withStatus(303)->withHeader('Location', '/register');
         }
@@ -160,6 +165,7 @@ final class RegisterController
                     'email' => $email,
                     'password_hash' => $passwordHash,
                     'role' => 'employee',
+                    'employment_type' => $roleCodeRow['employment_type'] ?? null,
                     'status' => 'active',
                     'first_name' => $firstName,
                     'last_name' => $lastName,
@@ -209,6 +215,7 @@ final class RegisterController
                 }
                 $this->repository->updateUserPassword($existingUser['id'], $passwordHash);
                 $this->repository->updateUserProfile($existingUser['id'], $firstName, $lastName);
+                $this->repository->updateUserEmploymentType($existingUser['id'], $roleCodeRow['employment_type'] ?? null);
                 $userId = $existingUser['id'];
             } else {
                 $created = $this->repository->createUser([
@@ -217,6 +224,7 @@ final class RegisterController
                     'email' => $email,
                     'password_hash' => $passwordHash,
                     'role' => 'employee',
+                    'employment_type' => $roleCodeRow['employment_type'] ?? null,
                     'status' => 'inactive',
                     'first_name' => $firstName,
                     'last_name' => $lastName,

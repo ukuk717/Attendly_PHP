@@ -10,6 +10,7 @@ use Attendly\Services\EmailOtpService;
 use Attendly\Support\AppTime;
 use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
+use Attendly\Support\PasswordHasher;
 use Attendly\Support\PasswordPolicy;
 use Attendly\Support\RateLimiter;
 use Attendly\Support\SessionAuth;
@@ -22,19 +23,27 @@ final class AccountController
     private Repository $repository;
     private EmailOtpService $emailOtpService;
     private PasswordPolicy $passwordPolicy;
+    private PasswordHasher $passwordHasher;
     private int $minPasswordLength;
+    private int $maxPasswordLength;
     private int $reauthTtl;
     private int $pendingEmailTtl;
     private int $otpLength;
 
     public function __construct(private View $view, ?Repository $repository = null, ?EmailOtpService $emailOtpService = null)
     {
-        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 12;
-        $this->minPasswordLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 12;
+        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 8;
+        $this->minPasswordLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 8;
         if ($this->minPasswordLength < 8) {
             $this->minPasswordLength = 8;
         }
-        $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength);
+        $rawMax = $_ENV['MAX_PASSWORD_LENGTH'] ?? 256;
+        $this->maxPasswordLength = filter_var($rawMax, FILTER_VALIDATE_INT, ['options' => ['min_range' => 32]]) ?: 256;
+        if (this->maxPasswordLengh <= $this->minPasswordLength) {
+            $this->maxPasswordLength = max(256, $this->minPasswordLength + 1);
+        }
+        $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength, $this->maxPasswordLength);
+        $this->passwordHasher = new PasswordHasher();
         $this->repository = $repository ?? new Repository();
         $this->emailOtpService = $emailOtpService ?? new EmailOtpService($this->repository);
         $this->reauthTtl = $this->sanitizeInt($_ENV['ACCOUNT_REAUTH_SECONDS'] ?? 900, 900, 60, 3600);
@@ -77,6 +86,7 @@ final class AccountController
             'currentUser' => $request->getAttribute('currentUser'),
             'profile' => $profile,
             'minPasswordLength' => $this->minPasswordLength,
+            'maxPasswordLength' => $this->maxPasswordLength,
             'otpLength' => $this->otpLength,
             'pendingEmail' => $emailState['email'],
             'pendingEmailExpiresAt' => $emailState['expiresAtDisplay'],
@@ -152,9 +162,6 @@ final class AccountController
         if ($newPassword !== $confirm) {
             $errors[] = '新しいパスワードが確認用と一致しません。';
         }
-        if (mb_strlen($newPassword, 'UTF-8') > 128) {
-            $errors[] = 'パスワードが長すぎます。128文字以内で入力してください。';
-        }
         $policyResult = $this->passwordPolicy->validate($newPassword);
         if (!$policyResult['ok']) {
             $errors = array_merge($errors, $policyResult['errors']);
@@ -172,17 +179,20 @@ final class AccountController
             SessionAuth::clear();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
-        if (!password_verify($current, $record['password_hash'])) {
+        $verifyCurrent = $this->passwordHasher->verify($current, $record['password_hash']);
+        if (!$verifyCurrent['ok']) {
             Flash::add('error', '現在のパスワードが一致しません。');
             return $response->withStatus(303)->withHeader('Location', '/account');
         }
-        if (password_verify($newPassword, $record['password_hash'])) {
+        $verifyNew = $this->passwordHasher->verify($newPassword, $record['password_hash']);
+        if ($verifyNew['ok']) {
             Flash::add('error', '新しいパスワードは現在のパスワードと異なるものを設定してください。');
             return $response->withStatus(303)->withHeader('Location', '/account');
         }
 
-        $hash = password_hash($newPassword, PASSWORD_DEFAULT);
-        if ($hash === false) {
+        try {
+            $hash = $this->passwordHasher->hash($newPassword);
+        } catch (\Throwable) {
             Flash::add('error', 'パスワードの更新に失敗しました。別のパスワードをお試しください。');
             return $response->withStatus(303)->withHeader('Location', '/account');
         }

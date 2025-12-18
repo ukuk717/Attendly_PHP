@@ -53,16 +53,16 @@
           id="password"
           name="password"
           required
-          minlength="<?= $e((string)($minPasswordLength ?? 12)) ?>"
+          minlength="<?= $e((string)($minPasswordLength ?? 8)) ?>"
           autocomplete="new-password"
-          maxlength="128"
+          maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>"
         >
       </label>
 
       <button type="submit" class="btn primary">登録する</button>
     </form>
 
-    <p class="form-note">パスワードは <strong><?= $e((string)($minPasswordLength ?? 12)) ?> 文字以上</strong> で、英字・数字・記号を含めてください。</p>
+    <p class="form-note">パスワードは <strong><?= $e((string)($minPasswordLength ?? 8)) ?> 文字以上</strong> で入力してください。</p>
     <div class="form-links">
       <a class="link" href="/login">ログイン画面へ戻る</a>
     </div>

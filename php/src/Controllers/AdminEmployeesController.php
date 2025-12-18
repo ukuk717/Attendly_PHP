@@ -110,6 +110,57 @@ final class AdminEmployeesController
         return $response->withStatus(303)->withHeader('Location', '/dashboard');
     }
 
+    public function updateEmploymentType(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        if (!$this->isValidCsrf($request)) {
+            Flash::add('error', 'CSRFトークンが無効です。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        try {
+            $admin = $this->requireTenantAdmin($request);
+        } catch (\Throwable) {
+            Flash::add('error', '権限がありません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        $employeeId = isset($args['userId']) ? (int)$args['userId'] : 0;
+        if ($employeeId <= 0) {
+            Flash::add('error', '対象の従業員が見つかりません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        $employee = $this->repository->findUserById($employeeId);
+        if (
+            $employee === null
+            || ($employee['role'] ?? '') !== 'employee'
+            || (int)$employee['tenant_id'] !== $admin['tenant_id']
+        ) {
+            Flash::add('error', '対象の従業員が見つかりません。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        $body = (array)$request->getParsedBody();
+        $employmentTypeRaw = $body['employment_type'] ?? null;
+        $employmentType = $employmentTypeRaw !== null ? trim((string)$employmentTypeRaw) : null;
+        if ($employmentType === '') {
+            $employmentType = null;
+        }
+
+        $allowedTypes = ['full-time', 'part-time', 'contractor', 'temporary', null];
+        if (!in_array($employmentType, $allowedTypes, true)) {
+            Flash::add('error', '無効な雇用区分です。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+
+        try {
+            $this->repository->updateUserEmploymentType($employeeId, $employmentType);
+            Flash::add('success', '雇用区分を更新しました。');
+        } catch (\Throwable) {
+            Flash::add('error', '雇用区分の更新に失敗しました。');
+        }
+
+        return $response->withStatus(303)->withHeader('Location', '/dashboard');
+    }
+
     /**
      * @return array{id:int,tenant_id:int,email:string,role:string}
      */

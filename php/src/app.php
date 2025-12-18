@@ -29,10 +29,12 @@ use Attendly\Controllers\PayslipController;
 use Attendly\Controllers\DashboardController;
 use Attendly\Controllers\PayrollViewerController;
 use Attendly\Controllers\WorkSessionController;
+use Attendly\Controllers\WorkSessionBreakController;
 use Attendly\Controllers\MfaSettingsController;
 use Attendly\Controllers\AccountController;
 use Attendly\Controllers\AdminEmployeesController;
 use Attendly\Controllers\AdminSessionsController;
+use Attendly\Controllers\AdminSessionBreaksController;
 use Attendly\Controllers\AdminTenantSettingsController;
 use Attendly\Controllers\PlatformTenantsController;
 use Attendly\Support\AppTime;
@@ -164,6 +166,7 @@ function create_app(): \Slim\App
     $app->post('/register/verify/cancel', [$registerVerify, 'cancel']);
     $dashboard = new DashboardController($view);
     $workSessions = new WorkSessionController();
+    $workSessionBreaks = new WorkSessionBreakController();
     $payrollViewer = new PayrollViewerController($view);
 
     // Role code management (admin)
@@ -174,6 +177,7 @@ function create_app(): \Slim\App
     $app->get('/admin/role-codes', [$roleCodeController, 'showPage'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/role-codes', [$roleCodeController, 'createFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/role-codes/{id}/disable', [$roleCodeController, 'disableFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/admin/role-codes/{id}/qr', [$roleCodeController, 'downloadQr'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
     // Timesheet export (admin)
     $timesheetExport = new TimesheetExportController($view);
@@ -191,6 +195,7 @@ function create_app(): \Slim\App
     $adminEmployees = new AdminEmployeesController();
     $app->post('/admin/employees/{userId}/status', [$adminEmployees, 'updateStatus'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/employees/{userId}/mfa/reset', [$adminEmployees, 'resetMfa'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/employment-type', [$adminEmployees, 'updateEmploymentType'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
     $adminSessions = new AdminSessionsController($view);
     $app->get('/admin/employees/{userId}/sessions', [$adminSessions, 'show'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
@@ -198,6 +203,12 @@ function create_app(): \Slim\App
     $app->post('/admin/employees/{userId}/sessions/{sessionId}/update', [$adminSessions, 'update'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->get('/admin/employees/{userId}/sessions/{sessionId}/delete/confirm', [$adminSessions, 'confirmDelete'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/employees/{userId}/sessions/{sessionId}/delete', [$adminSessions, 'delete'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    $adminSessionBreaks = new AdminSessionBreaksController($view);
+    $app->get('/admin/employees/{userId}/sessions/{sessionId}/breaks', [$adminSessionBreaks, 'show'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/sessions/{sessionId}/breaks/add', [$adminSessionBreaks, 'add'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/sessions/{sessionId}/breaks/{breakId}/update', [$adminSessionBreaks, 'update'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/employees/{userId}/sessions/{sessionId}/breaks/{breakId}/delete', [$adminSessionBreaks, 'delete'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
     $adminTenantSettings = new AdminTenantSettingsController();
     $app->post('/admin/settings/email-verification', [$adminTenantSettings, 'updateEmailVerification'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
@@ -207,11 +218,15 @@ function create_app(): \Slim\App
     // Platform (tenant admin MFA reset/rollback)
     $platformTenants = new PlatformTenantsController($view);
     $app->get('/platform/tenants', [$platformTenants, 'show'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/tenants/create', [$platformTenants, 'createTenant'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/tenants/{tenantId}/status', [$platformTenants, 'updateTenantStatus'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenant-admins/{userId}/mfa/reset', [$platformTenants, 'resetTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenant-admins/{userId}/mfa/rollback', [$platformTenants, 'rollbackTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
 
     $app->get('/dashboard', [$dashboard, 'show'])->add(new RequireAuthMiddleware());
     $app->post('/work-sessions/punch', [$workSessions, 'toggle'])->add(new RequireAuthMiddleware());
+    $app->post('/work-sessions/break/start', [$workSessionBreaks, 'start'])->add(new RequireAuthMiddleware());
+    $app->post('/work-sessions/break/end', [$workSessionBreaks, 'end'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls', [$payrollViewer, 'index'])->add(new RequireAuthMiddleware());
     $app->get('/payrolls/{id}/download', [$payrollViewer, 'download'])->add(new RequireAuthMiddleware());
 

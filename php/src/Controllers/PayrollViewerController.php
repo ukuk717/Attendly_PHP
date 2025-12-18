@@ -10,6 +10,7 @@ use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Slim\Psr7\Stream;
 
 final class PayrollViewerController
 {
@@ -82,16 +83,21 @@ final class PayrollViewerController
             Flash::add('error', '明細ファイルを開けませんでした。');
             return $response->withStatus(303)->withHeader('Location', '/payrolls');
         }
-        $data = file_get_contents($realPath);
-        if ($data === false) {
-            Flash::add('error', '明細ファイルの読み込みに失敗しました。');
-            return $response->withStatus(303)->withHeader('Location', '/payrolls');
-        }
         $fileName = basename($record['original_file_name']);
         // Remove characters that could break header syntax
         $fileName = str_replace(['"', "\r", "\n"], '', $fileName);
+        $handle = fopen($realPath, 'rb');
+        if ($handle === false) {
+            Flash::add('error', '明細ファイルを開けませんでした。');
+            return $response->withStatus(303)->withHeader('Location', '/payrolls');
+        }
+        $size = filesize($realPath);
+        $stream = new Stream($handle);
         $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $fileName, rawurlencode($fileName));
-        $response->getBody()->write($data);
+        $response = $response->withBody($stream);
+        if ($size !== false) {
+            $response = $response->withHeader('Content-Length', (string)$size);
+        }
         return $response
             ->withHeader('Content-Type', 'application/octet-stream')
             ->withHeader('Content-Disposition', $disposition);

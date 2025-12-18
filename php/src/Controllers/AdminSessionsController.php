@@ -6,6 +6,7 @@ namespace Attendly\Controllers;
 
 use Attendly\Database\Repository;
 use Attendly\Security\CsrfToken;
+use Attendly\Services\BreakComplianceService;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\View;
@@ -59,10 +60,30 @@ final class AdminSessionsController
         $monthEnd = $monthEndExclusive->modify('-1 second');
 
         $records = $this->repository->listWorkSessionsByUserBetween($employeeId, $monthStart, $monthEnd);
-        $sessions = array_map(function (array $session): array {
+        $breaksBySessionId = $this->fetchBreaksBySessionId($records);
+        $this->setBreaksBySessionIdCache($breaksBySessionId);
+        $edgeMinutes = BreakComplianceService::edgeBreakWarningMinutes();
+        $sessions = array_map(function (array $session) use ($edgeMinutes): array {
             $durationMinutes = null;
+            $breakMinutesValue = null;
+            $breakShortageMinutes = 0;
+            $edgeBreakWarning = false;
             if ($session['end_time'] !== null) {
-                $durationMinutes = $this->diffMinutes($session['start_time'], $session['end_time']);
+                $sessionBreaks = $this->breaksForSession((int)$session['id']);
+                $grossMinutes = $this->diffMinutes($session['start_time'], $session['end_time']);
+                $breakMinutesValue = $this->sumBreakExcludedMinutes(
+                    $sessionBreaks,
+                    $session['start_time'],
+                    $session['end_time']
+                );
+                $durationMinutes = max(0, $grossMinutes - $breakMinutesValue);
+                $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($durationMinutes, $breakMinutesValue);
+                $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
+                    $sessionBreaks,
+                    $session['start_time'],
+                    $session['end_time'],
+                    $edgeMinutes
+                );
             }
             return [
                 'id' => $session['id'],
@@ -71,11 +92,15 @@ final class AdminSessionsController
                 'startDisplay' => $session['start_time']->setTimezone(AppTime::timezone())->format('Y-m-d H:i'),
                 'endDisplay' => $session['end_time']?->setTimezone(AppTime::timezone())->format('Y-m-d H:i') ?? '記録中',
                 'formattedMinutes' => $durationMinutes !== null ? $this->formatMinutesToHM($durationMinutes) : '--',
+                'breakMinutes' => $breakMinutesValue,
+                'breakShortageMinutes' => $breakShortageMinutes,
+                'edgeBreakWarning' => $edgeBreakWarning,
             ];
         }, $records);
 
         $overlapping = $this->repository->listWorkSessionsByUserOverlapping($employeeId, $monthStart, $monthEndExclusive);
-        $totalMinutes = $this->calculateMinutesWithinRange($overlapping, $monthStart, $monthEndExclusive);
+        $overlappingBreaksBySessionId = $this->fetchBreaksBySessionId($overlapping);
+        $totalMinutes = $this->calculateNetMinutesWithinRange($overlapping, $monthStart, $monthEndExclusive, $overlappingBreaksBySessionId);
         $monthlySummary = [
             'totalMinutes' => $totalMinutes,
             'formattedTotal' => $this->formatMinutesToHM($totalMinutes),
@@ -428,7 +453,7 @@ final class AdminSessionsController
         return (int)floor(($end->getTimestamp() - $start->getTimestamp()) / 60);
     }
 
-    private function calculateMinutesWithinRange(array $sessions, \DateTimeImmutable $start, \DateTimeImmutable $endExclusive): int
+    private function calculateNetMinutesWithinRange(array $sessions, \DateTimeImmutable $start, \DateTimeImmutable $endExclusive, array $breaksBySessionId): int
     {
         $minutes = 0;
         foreach ($sessions as $session) {
@@ -442,9 +467,87 @@ final class AdminSessionsController
             if ($boundedEnd <= $boundedStart) {
                 continue;
             }
+            $grossMinutes = (int)floor(($boundedEnd->getTimestamp() - $boundedStart->getTimestamp()) / 60);
+            $breakMinutes = $this->sumBreakExcludedMinutes(
+                $breaksBySessionId[(int)($session['id'] ?? 0)] ?? [],
+                $boundedStart,
+                $boundedEnd
+            );
+            $minutes += max(0, $grossMinutes - $breakMinutes);
+        }
+        return $minutes;
+    }
+
+    private function sumBreakExcludedMinutes(array $breaks, \DateTimeImmutable $rangeStart, \DateTimeImmutable $rangeEnd): int
+    {
+        $minutes = 0;
+        foreach ($breaks as $break) {
+            if (empty($break['start_time']) || !$break['start_time'] instanceof \DateTimeImmutable) {
+                continue;
+            }
+            $start = $break['start_time'];
+            $end = isset($break['end_time']) && $break['end_time'] instanceof \DateTimeImmutable ? $break['end_time'] : $rangeEnd;
+            if ($end <= $start) {
+                continue;
+            }
+            $boundedStart = $start < $rangeStart ? $rangeStart : $start;
+            $boundedEnd = $end > $rangeEnd ? $rangeEnd : $end;
+            if ($boundedEnd <= $boundedStart) {
+                continue;
+            }
             $minutes += (int)floor(($boundedEnd->getTimestamp() - $boundedStart->getTimestamp()) / 60);
         }
         return $minutes;
+    }
+
+    /**
+     * @param array<int, array{id:int}> $sessions
+     * @return array<int, array<int, array{work_session_id:int,start_time:\DateTimeImmutable,end_time:?\DateTimeImmutable}>>
+     */
+    private function fetchBreaksBySessionId(array $sessions): array
+    {
+        $breaksBySessionId = [];
+        if ($sessions === []) {
+            return $breaksBySessionId;
+        }
+
+        $sessionIds = array_map(static fn(array $row): int => (int)$row['id'], $sessions);
+        $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
+        if ($sessionIds === []) {
+            return $breaksBySessionId;
+        }
+
+        try {
+            $breakRows = $this->repository->listWorkSessionBreaksBySessionIds($sessionIds);
+            foreach ($breakRows as $breakRow) {
+                $sessionId = (int)$breakRow['work_session_id'];
+                if (!isset($breaksBySessionId[$sessionId])) {
+                    $breaksBySessionId[$sessionId] = [];
+                }
+                $breaksBySessionId[$sessionId][] = $breakRow;
+            }
+        } catch (\PDOException $e) {
+            if ($e->getCode() !== '42S02') {
+                throw $e;
+            }
+        }
+
+        return $breaksBySessionId;
+    }
+
+    private function setBreaksBySessionIdCache(array $breaksBySessionId): void
+    {
+        $this->breaksBySessionIdCache = $breaksBySessionId;
+    }
+
+    private array $breaksBySessionIdCache = [];
+
+    private function breaksForSession(int $sessionId): array
+    {
+        if ($sessionId <= 0) {
+            return [];
+        }
+        return $this->breaksBySessionIdCache[$sessionId] ?? [];
     }
 
     private function formatMinutesToHM(int $minutes): string

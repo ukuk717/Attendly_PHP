@@ -10,16 +10,15 @@
           id="password"
           name="password"
           required
-          minlength="<?= $e((string)($minPasswordLength ?? 12)) ?>"
-          maxlength="128"
-          pattern="(?=.*[A-Za-z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{<?= $e((string)($minPasswordLength ?? 12)) ?>,128}"
+          minlength="<?= $e((string)($minPasswordLength ?? 8)) ?>"
+          maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>"
           autocomplete="new-password"
         >
       </label>
       <button type="submit" class="btn primary">再設定する</button>
     </form>
     <p class="form-note">
-      パスワードは <strong><?= $e((string)($minPasswordLength ?? 12)) ?> 文字以上</strong> で、英字・数字・記号を必ず含めてください。
+      パスワードは <strong><?= $e((string)($minPasswordLength ?? 8)) ?> 文字以上</strong> で入力してください。
     </p>
     <div class="form-links">
       <a class="link" href="/login">ログイン画面へ戻る</a>

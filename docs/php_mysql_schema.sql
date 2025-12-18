@@ -23,6 +23,7 @@ CREATE TABLE users (
   email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(32) NOT NULL,
+  employment_type VARCHAR(32),
   must_change_password TINYINT(1) NOT NULL DEFAULT 0,
   failed_attempts INT NOT NULL DEFAULT 0,
   locked_until DATETIME(3),
@@ -35,6 +36,7 @@ CREATE TABLE users (
   PRIMARY KEY (id),
   UNIQUE KEY users_email_unique (email),
   KEY users_role_idx (role),
+  KEY users_employment_type_idx (employment_type),
   KEY users_email_idx (email),
   KEY users_tenant_role_idx (tenant_id, role),
   KEY users_status_idx (status),
@@ -45,6 +47,7 @@ CREATE TABLE role_codes (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_id INT UNSIGNED NOT NULL,
   code VARCHAR(64) NOT NULL,
+  employment_type VARCHAR(32),
   expires_at DATETIME(3),
   max_uses INT,
   usage_count INT NOT NULL DEFAULT 0,
@@ -55,6 +58,7 @@ CREATE TABLE role_codes (
   UNIQUE KEY role_codes_code_unique (code),
   KEY role_codes_tenant_idx (tenant_id),
   KEY role_codes_code_idx (code),
+  KEY role_codes_employment_type_idx (employment_type),
   CONSTRAINT role_codes_tenant_fk FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
   CONSTRAINT role_codes_created_by_fk FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -77,12 +81,31 @@ CREATE TABLE work_sessions (
   user_id INT UNSIGNED NOT NULL,
   start_time DATETIME(3) NOT NULL,
   end_time DATETIME(3),
+  CHECK (end_time IS NULL OR end_time >= start_time),
   archived_at DATETIME(3),
   created_at DATETIME(3) NOT NULL,
   PRIMARY KEY (id),
   KEY work_sessions_user_start_idx (user_id, start_time),
   KEY work_sessions_archived_idx (archived_at),
   CONSTRAINT work_sessions_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE work_session_breaks (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  work_session_id INT UNSIGNED NOT NULL,
+  break_type VARCHAR(32) NOT NULL,
+  is_compensated TINYINT(1) NOT NULL DEFAULT 0,
+  start_time DATETIME(3) NOT NULL,
+  end_time DATETIME(3),
+  note VARCHAR(255),
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY work_session_breaks_session_start_idx (work_session_id, start_time),
+  KEY work_session_breaks_session_end_idx (work_session_id, end_time),
+  KEY work_session_breaks_type_idx (break_type),
+  KEY work_session_breaks_compensated_idx (is_compensated),
+  CONSTRAINT work_session_breaks_session_fk FOREIGN KEY (work_session_id) REFERENCES work_sessions (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE payroll_records (

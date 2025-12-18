@@ -49,16 +49,19 @@
         <tr>
           <th>従業員</th>
           <th>月合計</th>
+          <th>警告</th>
           <th>勤務記録訂正</th>
-          <th>CSV出力</th>
+          <th>出力</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($monthlySummary)): ?>
-          <tr><td colspan="4">従業員が登録されていません。</td></tr>
+          <tr><td colspan="5">従業員が登録されていません。</td></tr>
         <?php else: ?>
           <?php foreach ($monthlySummary as $row): ?>
             <?php $u = $row['user'] ?? []; ?>
+            <?php $shortageDays = (int)($row['breakShortageDays'] ?? 0); ?>
+            <?php $edgeDays = (int)($row['edgeBreakWarningDays'] ?? 0); ?>
             <tr>
               <td>
                 <div class="user-cell">
@@ -70,6 +73,17 @@
               </td>
               <td><?= $e((string)($row['formattedTotal'] ?? '0分')) ?></td>
               <td>
+                <?php if ($shortageDays > 0): ?>
+                  <div><span class="status-badge warning">休憩不足</span> <span class="muted"><?= $e((string)$shortageDays) ?>日</span></div>
+                <?php endif; ?>
+                <?php if ($edgeDays > 0): ?>
+                  <div><span class="status-badge warning">要注意</span> <span class="muted"><?= $e((string)$edgeDays) ?>日</span></div>
+                <?php endif; ?>
+                <?php if ($shortageDays === 0 && $edgeDays === 0): ?>
+                  -
+                <?php endif; ?>
+              </td>
+              <td>
                 <a class="btn secondary" href="/admin/employees/<?= $e((string)($u['id'] ?? 0)) ?>/sessions<?= $e($safeQueryString) ?>">
                   勤務記録訂正
                 </a>
@@ -80,7 +94,16 @@
                   <input type="hidden" name="userId" value="<?= $e((string)($u['id'] ?? 0)) ?>">
                   <input type="hidden" name="year" value="<?= $e((string)($targetYear ?? '')) ?>">
                   <input type="hidden" name="month" value="<?= $e((string)($targetMonth ?? '')) ?>">
-                  <button type="submit" class="btn secondary">CSV出力</button>
+                  <input type="hidden" name="format" value="excel">
+                  <button type="submit" class="btn secondary">Excel</button>
+                </form>
+                <form method="post" action="/admin/export" class="inline-form" style="display:inline; margin-left:4px;">
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <input type="hidden" name="userId" value="<?= $e((string)($u['id'] ?? 0)) ?>">
+                  <input type="hidden" name="year" value="<?= $e((string)($targetYear ?? '')) ?>">
+                  <input type="hidden" name="month" value="<?= $e((string)($targetMonth ?? '')) ?>">
+                  <input type="hidden" name="format" value="pdf">
+                  <button type="submit" class="btn secondary">PDF</button>
                 </form>
               </td>
             </tr>
@@ -102,19 +125,32 @@
         <tr>
           <th>従業員</th>
           <th>メール</th>
+          <th>雇用区分</th>
           <th>状態</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($employeesActive)): ?>
-          <tr><td colspan="4">有効な従業員がいません。</td></tr>
+          <tr><td colspan="5">有効な従業員がいません。</td></tr>
         <?php else: ?>
           <?php foreach ($employeesActive as $employee): ?>
             <?php $email = trim((string)($employee['email'] ?? '')); ?>
+            <?php $employmentType = (string)($employee['employment_type'] ?? ''); ?>
             <tr>
               <td><?= $e((string)$employee['username']) ?></td>
               <td><?= $email !== '' ? $e($email) : '未設定' ?></td>
+              <td>
+                <form method="post" action="/admin/employees/<?= $e((string)$employee['id']) ?>/employment-type" class="form-inline">
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <select name="employment_type">
+                    <option value="" <?= $employmentType === '' ? 'selected' : '' ?>>未指定</option>
+                    <option value="part_time" <?= $employmentType === 'part_time' ? 'selected' : '' ?>>アルバイト/パート</option>
+                    <option value="full_time" <?= $employmentType === 'full_time' ? 'selected' : '' ?>>社員</option>
+                  </select>
+                  <button type="submit" class="btn">保存</button>
+                </form>
+              </td>
               <td><span class="status-badge success">有効</span></td>
               <td>
                 <div class="table-actions">
@@ -153,20 +189,33 @@
         <tr>
           <th>従業員</th>
           <th>メール</th>
+          <th>雇用区分</th>
           <th>最終更新</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($employeesInactive)): ?>
-          <tr><td colspan="4">無効化された従業員はいません。</td></tr>
+          <tr><td colspan="5">無効化された従業員はいません。</td></tr>
         <?php else: ?>
           <?php foreach ($employeesInactive as $employee): ?>
             <?php $email = trim((string)($employee['email'] ?? '')); ?>
             <?php $deactivated = trim((string)($employee['deactivatedAtDisplay'] ?? '')); ?>
+            <?php $employmentType = (string)($employee['employment_type'] ?? ''); ?>
             <tr>
               <td><?= $e((string)$employee['username']) ?></td>
               <td><?= $email !== '' ? $e($email) : '未設定' ?></td>
+              <td>
+                <form method="post" action="/admin/employees/<?= $e((string)$employee['id']) ?>/employment-type" class="form-inline">
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <select name="employment_type">
+                    <option value="" <?= $employmentType === '' ? 'selected' : '' ?>>未指定</option>
+                    <option value="part_time" <?= $employmentType === 'part_time' ? 'selected' : '' ?>>アルバイト/パート</option>
+                    <option value="full_time" <?= $employmentType === 'full_time' ? 'selected' : '' ?>>社員</option>
+                  </select>
+                  <button type="submit" class="btn">保存</button>
+                </form>
+              </td>
               <td><?= $deactivated !== '' ? $e($deactivated) : '-' ?></td>
               <td>
                 <div class="table-actions">

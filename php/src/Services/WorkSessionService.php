@@ -18,7 +18,7 @@ final class WorkSessionService
     /**
      * 勤務開始/終了をワンクリックで切り替える。
      *
-     * @return array{status:'opened'|'closed', session:array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,archived_at:?DateTimeImmutable}}
+     * @return array{status:'opened'|'closed', session:array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,archived_at:?DateTimeImmutable}, break_auto_closed?:bool}
      */
     public function togglePunch(int $userId): array
     {
@@ -31,8 +31,9 @@ final class WorkSessionService
      *
      * @return array{
      *   open_session:?array{id:int,user_id:int,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,archived_at:?DateTimeImmutable},
-     *   recent_sessions:array<int,array{start:string,end:string,status:string,duration:string}>,
-     *   daily_summary:array<int,array{date:string,minutes:int,formatted:string}>,
+     *   open_break:?array{id:int,work_session_id:int,break_type:string,is_compensated:bool,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,note:?string},
+     *   recent_sessions:array<int,array{start:string,end:string,status:string,duration:string,break_shortage_minutes:int,edge_break_warning:bool}>,
+     *   daily_summary:array<int,array{date:string,minutes:int,formatted:string,break_shortage_minutes:int,edge_break_warning:bool}>,
      *   monthly_total_minutes:int,
      *   monthly_total_formatted:string,
      *   timezone:string
@@ -52,19 +53,91 @@ final class WorkSessionService
         $sessions = $this->repository->listWorkSessionsByUserBetween($userId, $historyStart, $rangeEnd);
         $open = $this->repository->findOpenWorkSession($userId);
 
+        $openBreak = null;
+        if ($open !== null) {
+            try {
+                $openBreak = $this->repository->findOpenWorkSessionBreak((int)$open['id']);
+            } catch (\PDOException $e) {
+                if ($e->getCode() !== '42S02') {
+                    throw $e;
+                }
+            }
+        }
+
+        $sessionIds = array_map(static fn(array $s): int => (int)$s['id'], $sessions);
+        $recentSessions = $this->repository->listRecentWorkSessionsByUser($userId, 10);
+        foreach ($recentSessions as $s) {
+            $sessionIds[] = (int)$s['id'];
+        }
+        $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
+
+        $breaksBySessionId = [];
+        if ($sessionIds !== []) {
+            try {
+                $breakRows = $this->repository->listWorkSessionBreaksBySessionIds($sessionIds);
+                foreach ($breakRows as $breakRow) {
+                    $sid = (int)$breakRow['work_session_id'];
+                    if (!isset($breaksBySessionId[$sid])) {
+                        $breaksBySessionId[$sid] = [];
+                    }
+                    $breaksBySessionId[$sid][] = $breakRow;
+                }
+            } catch (\PDOException $e) {
+                if ($e->getCode() !== '42S02') {
+                    throw $e;
+                }
+            }
+        }
+
+        $openDayKey = null;
+        if ($open !== null && isset($open['start_time']) && $open['start_time'] instanceof DateTimeImmutable) {
+            $openDayKey = $open['start_time']->setTimezone(AppTime::timezone())->format('Y-m-d');
+        }
+        $edgeMinutes = BreakComplianceService::edgeBreakWarningMinutes();
+
         $dailyMinutes = [];
+        $dailyBreakMinutes = [];
+        $dailyEdgeWarnings = [];
         $monthlyTotal = 0;
         foreach ($sessions as $session) {
             $end = $session['end_time'] ?? $now;
-            $minutes = $this->diffMinutes($session['start_time'], $end);
+            $sessionBreaks = $breaksBySessionId[(int)$session['id']] ?? [];
+            $grossMinutes = $this->diffMinutes($session['start_time'], $end);
+            $breakMinutes = $this->sumBreakExcludedMinutes(
+                $sessionBreaks,
+                $session['start_time'],
+                $end
+            );
+            $minutes = max(0, $grossMinutes - $breakMinutes);
             $startDateKey = $session['start_time']->setTimezone(AppTime::timezone())->format('Y-m-d');
             if (!isset($dailyMinutes[$startDateKey])) {
                 $dailyMinutes[$startDateKey] = 0;
             }
             $dailyMinutes[$startDateKey] += $minutes;
+            if (!isset($dailyBreakMinutes[$startDateKey])) {
+                $dailyBreakMinutes[$startDateKey] = 0;
+            }
+            $dailyBreakMinutes[$startDateKey] += $breakMinutes;
+            if ($session['end_time'] !== null && $session['end_time'] instanceof DateTimeImmutable) {
+                $edgeWarning = BreakComplianceService::hasEdgeBreakWarning(
+                    $sessionBreaks,
+                    $session['start_time'],
+                    $session['end_time'],
+                    $edgeMinutes
+                );
+                if ($edgeWarning) {
+                    $dailyEdgeWarnings[$startDateKey] = true;
+                }
+            }
             if ($end > $monthStart) {
                 $monthlyStart = $session['start_time'] < $monthStart ? $monthStart : $session['start_time'];
-                $monthlyTotal += $this->diffMinutes($monthlyStart, $end);
+                $monthlyGross = $this->diffMinutes($monthlyStart, $end);
+                $monthlyBreak = $this->sumBreakExcludedMinutes(
+                    $sessionBreaks,
+                    $monthlyStart,
+                    $end
+                );
+                $monthlyTotal += max(0, $monthlyGross - $monthlyBreak);
             }
         }
 
@@ -74,26 +147,57 @@ final class WorkSessionService
             if ($date < $rangeStart->setTimezone(AppTime::timezone())->format('Y-m-d')) {
                 continue;
             }
+            $breakShortageMinutes = 0;
+            $edgeBreakWarning = !empty($dailyEdgeWarnings[$date]);
+            if ($openDayKey === null || $date !== $openDayKey) {
+                $breakShortageMinutes = BreakComplianceService::breakShortageMinutes(
+                    $minutes,
+                    (int)($dailyBreakMinutes[$date] ?? 0)
+                );
+            }
             $dailySummary[] = [
                 'date' => $date,
                 'minutes' => $minutes,
                 'formatted' => $this->formatMinutes($minutes),
+                'break_shortage_minutes' => $breakShortageMinutes,
+                'edge_break_warning' => $edgeBreakWarning,
             ];
         }
 
-        $recentSessions = $this->repository->listRecentWorkSessionsByUser($userId, 10);
-        $recentFormatted = array_map(function (array $row) use ($now): array {
+        $recentFormatted = array_map(function (array $row) use ($now, $breaksBySessionId, $edgeMinutes): array {
             $end = $row['end_time'] ?? $now;
+            $sessionBreaks = $breaksBySessionId[(int)$row['id']] ?? [];
+            $grossMinutes = $this->diffMinutes($row['start_time'], $end);
+            $breakMinutes = $this->sumBreakExcludedMinutes(
+                $sessionBreaks,
+                $row['start_time'],
+                $end
+            );
+            $netMinutes = max(0, $grossMinutes - $breakMinutes);
+            $breakShortageMinutes = 0;
+            $edgeBreakWarning = false;
+            if ($row['end_time'] !== null && $row['end_time'] instanceof DateTimeImmutable) {
+                $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($netMinutes, $breakMinutes);
+                $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
+                    $sessionBreaks,
+                    $row['start_time'],
+                    $row['end_time'],
+                    $edgeMinutes
+                );
+            }
             return [
                 'start' => $row['start_time']->setTimezone(AppTime::timezone())->format('Y-m-d H:i'),
                 'end' => $row['end_time']?->setTimezone(AppTime::timezone())->format('Y-m-d H:i') ?? '勤務中',
                 'status' => $row['end_time'] === null ? 'open' : 'closed',
-                'duration' => $this->formatMinutes($this->diffMinutes($row['start_time'], $end)),
+                'duration' => $this->formatMinutes($netMinutes),
+                'break_shortage_minutes' => $breakShortageMinutes,
+                'edge_break_warning' => $edgeBreakWarning,
             ];
         }, $recentSessions);
 
         return [
             'open_session' => $open,
+            'open_break' => $openBreak,
             'recent_sessions' => $recentFormatted,
             'daily_summary' => $dailySummary,
             'monthly_total_minutes' => $monthlyTotal,
@@ -119,18 +223,45 @@ final class WorkSessionService
         $recentSessions = $this->repository->listRecentWorkSessionsByTenant($tenantId, 8);
         $now = AppTime::now();
 
-        $recent = array_map(function (array $row) use ($now): array {
+        $breaksBySessionId = [];
+        if ($recentSessions !== []) {
+            $sessionIds = array_map(static fn(array $row): int => (int)$row['id'], $recentSessions);
+            $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
+            try {
+                $breakRows = $this->repository->listWorkSessionBreaksBySessionIds($sessionIds);
+                foreach ($breakRows as $breakRow) {
+                    $sid = (int)$breakRow['work_session_id'];
+                    if (!isset($breaksBySessionId[$sid])) {
+                        $breaksBySessionId[$sid] = [];
+                    }
+                    $breaksBySessionId[$sid][] = $breakRow;
+                }
+            } catch (\PDOException $e) {
+                if ($e->getCode() !== '42S02') {
+                    throw $e;
+                }
+            }
+        }
+
+        $recent = array_map(function (array $row) use ($now, $breaksBySessionId): array {
             $label = trim(($row['last_name'] ?? '') . ' ' . ($row['first_name'] ?? ''));
             if ($label === '') {
                 $label = $row['email'] ?? '従業員';
             }
             $end = $row['end_time'] ?? $now;
+            $grossMinutes = $this->diffMinutes($row['start_time'], $end);
+            $breakMinutes = $this->sumBreakExcludedMinutes(
+                $breaksBySessionId[(int)$row['id']] ?? [],
+                $row['start_time'],
+                $end
+            );
+            $netMinutes = max(0, $grossMinutes - $breakMinutes);
             return [
                 'user_label' => $label,
                 'start' => $row['start_time']->setTimezone(AppTime::timezone())->format('Y-m-d H:i'),
                 'end' => $row['end_time']?->setTimezone(AppTime::timezone())->format('Y-m-d H:i') ?? '勤務中',
                 'status' => $row['end_time'] === null ? 'open' : 'closed',
-                'duration' => $this->formatMinutes($this->diffMinutes($row['start_time'], $end)),
+                'duration' => $this->formatMinutes($netMinutes),
             ];
         }, $recentSessions);
 
@@ -149,6 +280,31 @@ final class WorkSessionService
         }
         $interval = $start->diff($end);
         return ($interval->days * 24 * 60) + ($interval->h * 60) + $interval->i + (int)floor($interval->s / 60);
+    }
+
+    /**
+     * @param array<int, array{
+     *   start_time:DateTimeImmutable,
+     *   end_time:?DateTimeImmutable
+     * }> $breaks
+     */
+    private function sumBreakExcludedMinutes(array $breaks, DateTimeImmutable $rangeStart, DateTimeImmutable $rangeEnd): int
+    {
+        $minutes = 0;
+        foreach ($breaks as $break) {
+            $start = $break['start_time'];
+            $end = $break['end_time'] ?? $rangeEnd;
+            if ($end <= $start) {
+                continue;
+            }
+            $boundedStart = $start < $rangeStart ? $rangeStart : $start;
+            $boundedEnd = $end > $rangeEnd ? $rangeEnd : $end;
+            if ($boundedEnd <= $boundedStart) {
+                continue;
+            }
+            $minutes += (int)floor(($boundedEnd->getTimestamp() - $boundedStart->getTimestamp()) / 60);
+        }
+        return $minutes;
     }
 
     private function formatMinutes(int $minutes): string

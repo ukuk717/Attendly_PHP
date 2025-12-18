@@ -16,10 +16,14 @@ use Psr\Http\Message\ServerRequestInterface;
 final class PlatformTenantsController
 {
     private Repository $repository;
+    private int $tenantsPerPage;
+    private int $adminsPerPage;
 
     public function __construct(private View $view, ?Repository $repository = null)
     {
         $this->repository = $repository ?? new Repository();
+        $this->tenantsPerPage = 100;
+        $this->adminsPerPage = 200;
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -27,17 +31,17 @@ final class PlatformTenantsController
         $platform = $this->requirePlatformUser($request);
 
         $query = $request->getQueryParams();
-        $pageRaw = $query['page'] ?? 1;
-        $page = filter_var($pageRaw, FILTER_VALIDATE_INT, ['options' => ['default' => 1]]);
-        if ($page === false) {
-            $page = 1;
-        }
-        $page = max(1, (int)$page);
-        $limit = 200;
-        $offset = ($page - 1) * $limit;
+        $tenantPage = $this->sanitizePage($query['tenants_page'] ?? 1);
+        $adminsPage = $this->sanitizePage($query['admins_page'] ?? ($query['page'] ?? 1));
 
-        $total = $this->repository->countTenantAdminsForPlatform();
-        $admins = $this->repository->listTenantAdminsForPlatform($limit, $offset);
+        $tenantsOffset = ($tenantPage - 1) * $this->tenantsPerPage;
+        $adminsOffset = ($adminsPage - 1) * $this->adminsPerPage;
+
+        $tenantTotal = $this->repository->countTenantsForPlatform();
+        $tenants = $this->repository->listTenantsForPlatform($this->tenantsPerPage, $tenantsOffset);
+
+        $totalAdmins = $this->repository->countTenantAdminsForPlatform();
+        $admins = $this->repository->listTenantAdminsForPlatform($this->adminsPerPage, $adminsOffset);
 
         $adminIds = [];
         foreach ($admins as $admin) {
@@ -66,12 +70,19 @@ final class PlatformTenantsController
             ];
         }
 
-        $pagination = [
-            'page' => $page,
-            'limit' => $limit,
-            'total' => $total,
-            'hasPrev' => $page > 1,
-            'hasNext' => ($offset + $limit) < $total,
+        $tenantsPagination = [
+            'page' => $tenantPage,
+            'limit' => $this->tenantsPerPage,
+            'total' => $tenantTotal,
+            'hasPrev' => $tenantPage > 1,
+            'hasNext' => ($tenantsOffset + $this->tenantsPerPage) < $tenantTotal,
+        ];
+        $adminsPagination = [
+            'page' => $adminsPage,
+            'limit' => $this->adminsPerPage,
+            'total' => $totalAdmins,
+            'hasPrev' => $adminsPage > 1,
+            'hasNext' => ($adminsOffset + $this->adminsPerPage) < $totalAdmins,
         ];
 
         $html = $this->view->renderWithLayout('platform_tenants', [
@@ -81,12 +92,100 @@ final class PlatformTenantsController
             'currentUser' => $request->getAttribute('currentUser'),
             'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'platformUser' => $platform,
+            'tenants' => $tenants,
+            'tenantsPagination' => $tenantsPagination,
             'tenantAdmins' => $rows,
-            'pagination' => $pagination,
+            'adminsPagination' => $adminsPagination,
         ], 'platform_layout');
 
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
+    }
+
+    public function createTenant(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
+    {
+        $this->requirePlatformUser($request);
+        $body = (array)$request->getParsedBody();
+        if (!CsrfToken::verify((string)($body['csrf_token'] ?? ''))) {
+            Flash::add('error', '無効なリクエストです。もう一度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        $name = trim((string)($body['name'] ?? ''));
+        $contactEmail = trim((string)($body['contactEmail'] ?? ''));
+        if ($name === '' || mb_strlen($name, 'UTF-8') > 255 || preg_match('/[\r\n]/', $name)) {
+            Flash::add('error', 'テナント名を入力してください（255文字以内）。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        $email = $contactEmail !== '' ? strtolower($contactEmail) : null;
+        if ($email !== null && (mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $email))) {
+            Flash::add('error', '連絡先メールアドレスが不正です。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        $confirmed = strtolower(trim((string)($body['confirmed'] ?? '')));
+        if ($confirmed !== 'yes') {
+            Flash::add('error', '確認にチェックしてください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        try {
+            $tenant = $this->repository->createTenant($name, $email);
+        } catch (\Throwable) {
+            Flash::add('error', 'テナントの作成に失敗しました。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        Flash::add('success', sprintf('テナント「%s」を作成しました。', (string)($tenant['name'] ?? '')));
+        return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+    }
+
+    public function updateTenantStatus(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        $this->requirePlatformUser($request);
+        $body = (array)$request->getParsedBody();
+        if (!CsrfToken::verify((string)($body['csrf_token'] ?? ''))) {
+            Flash::add('error', '無効なリクエストです。もう一度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        $tenantId = isset($args['tenantId']) ? (int)$args['tenantId'] : 0;
+        if ($tenantId <= 0) {
+            Flash::add('error', '対象のテナントが見つかりません。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        $tenant = $this->repository->findTenantById($tenantId);
+        if ($tenant === null) {
+            Flash::add('error', '対象のテナントが見つかりません。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        $action = strtolower(trim((string)($body['action'] ?? '')));
+        $nextStatus = null;
+        if ($action === 'deactivate') {
+            $nextStatus = 'inactive';
+        } elseif ($action === 'activate') {
+            $nextStatus = 'active';
+        }
+        if ($nextStatus === null) {
+            Flash::add('error', '無効な操作です。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        $confirmed = strtolower(trim((string)($body['confirmed'] ?? '')));
+        if ($confirmed !== 'yes') {
+            Flash::add('error', '確認にチェックしてください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        try {
+            $this->repository->updateTenantStatus($tenantId, $nextStatus);
+        } catch (\Throwable) {
+            Flash::add('error', 'ステータス更新に失敗しました。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        $label = $tenant['name'] !== null ? (string)$tenant['name'] : ('ID:' . (string)$tenantId);
+        Flash::add('success', sprintf('テナント「%s」を%sしました。', $label, $nextStatus === 'active' ? '再開' : '停止'));
+        return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
     }
 
     public function resetTenantAdminMfa(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
@@ -278,5 +377,14 @@ final class PlatformTenantsController
             'rolledBackAtDisplay' => $rolledBack,
             'rollbackReason' => $log['rollback_reason'] !== null ? (string)$log['rollback_reason'] : null,
         ];
+    }
+
+    private function sanitizePage(mixed $value): int
+    {
+        $page = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['default' => 1]]);
+        if ($page === false) {
+            $page = 1;
+        }
+        return max(1, (int)$page);
     }
 }

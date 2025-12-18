@@ -21,12 +21,15 @@ final class AuthController
     private Repository $repository;
     private string $trustCookieName;
     private int $trustTtlDays;
+    private int $maxPasswordLength;
 
     public function __construct(private View $view, private ?AuthService $authService = null, ?Repository $repository = null)
     {
         $this->repository = $repository ?? new Repository();
         $this->trustCookieName = trim((string)($_ENV['MFA_TRUST_COOKIE_NAME'] ?? 'mfa_trust'));
         $this->trustTtlDays = max(1, (int)($_ENV['MFA_TRUST_TTL_DAYS'] ?? 30));
+        $rawMax = $_ENV['MAX_PASSWORD_LENGTH'] ?? 256;
+        $this->maxPasswordLength = filter_var($rawMax, FILTER_VALIDATE_INT, ['options' => ['default' => 256, 'min_range' => 32]]) ?: 256;
     }
 
     public function showLogin(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -63,8 +66,8 @@ final class AuthController
             Flash::add('error', 'パスワードを入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
-        if (mb_strlen($password, 'UTF-8') > 128) {
-            Flash::add('error', 'パスワードが長すぎます。128文字以内で入力してください。');
+        if ($this->maxPasswordLength > 0 && mb_strlen($password, 'UTF-8') > $this->maxPasswordLength) {
+            Flash::add('error', 'パスワードが長すぎます。' . $this->maxPasswordLength . '文字以内で入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
 
@@ -140,6 +143,8 @@ final class AuthController
         $error = $result['error'] ?? 'unknown';
         if ($error === 'inactive') {
             Flash::add('error', 'アカウントが無効化されています。');
+        } elseif ($error === 'locked') {
+            Flash::add('error', 'ログイン試行回数が多すぎます。しばらく待ってから再度お試しください。');
         } elseif ($error === 'invalid_password' || $error === 'not_found') {
             Flash::add('error', 'メールアドレスまたはパスワードが違います。');
         } else {

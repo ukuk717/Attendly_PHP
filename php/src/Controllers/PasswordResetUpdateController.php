@@ -7,6 +7,7 @@ namespace Attendly\Controllers;
 use Attendly\Security\CsrfToken;
 use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
+use Attendly\Support\PasswordHasher;
 use Attendly\Support\PasswordPolicy;
 use Attendly\Support\SessionAuth;
 use Attendly\Support\RateLimiter;
@@ -18,12 +19,19 @@ use Psr\Http\Message\ServerRequestInterface;
 final class PasswordResetUpdateController
 {
     private PasswordPolicy $policy;
+    private PasswordHasher $hasher;
 
     public function __construct(private View $view, private ?PasswordResetService $resetService = null)
     {
-        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 12;
-        $minLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 12;
-        $this->policy = new PasswordPolicy($minLength);
+        $rawMin = $_ENV['MIN_PASSWORD_LENGTH'] ?? 8;
+        $minLength = filter_var($rawMin, FILTER_VALIDATE_INT, ['options' => ['min_range' => 8]]) ?: 8;
+        $rawMax = $_ENV['MAX_PASSWORD_LENGTH'] ?? 256;
+        $maxLength = filter_var($rawMax, FILTER_VALIDATE_INT, ['options' => ['min_range' => 32]]) ?: 256;
+        if ($maxLength <= $minLength) {
+            throw new \InvalidArgumentException("MIN_PASSWORD_LENGTH must be less than MAX_PASSWORD_LENGTH");
+        }
+        $this->policy = new PasswordPolicy($minLength, $maxLength);
+        $this->hasher = new PasswordHasher();
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
@@ -52,6 +60,7 @@ final class PasswordResetUpdateController
             'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'token' => $token,
             'minPasswordLength' => $this->policy->getMinLength(),
+            'maxPasswordLength' => $this->policy->getMaxLength(),
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -95,8 +104,9 @@ final class PasswordResetUpdateController
             return $response->withStatus(303)->withHeader('Location', $safeLocation);
         }
 
-        $hash = password_hash($password, PASSWORD_DEFAULT);
-        if ($hash === false) {
+        try {
+            $hash = $this->hasher->hash($password);
+        } catch (\Throwable) {
             Flash::add('error', 'パスワードの処理中にエラーが発生しました。');
             $safeLocation = '/password/reset/' . rawurlencode($token);
             return $response->withStatus(303)->withHeader('Location', $safeLocation);

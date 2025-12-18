@@ -5,11 +5,20 @@ declare(strict_types=1);
 namespace Attendly\Services;
 
 use Attendly\Database\Repository;
+use Attendly\Support\AppTime;
+use Attendly\Support\PasswordHasher;
 
 final class AuthService
 {
-    public function __construct(private Repository $repo = new Repository())
+    private PasswordHasher $hasher;
+    private int $maxFailures;
+    private int $lockSeconds;
+
+    public function __construct(private Repository $repo = new Repository(), ?PasswordHasher $hasher = null)
     {
+        $this->hasher = $hasher ?? new PasswordHasher();
+        $this->maxFailures = $this->sanitizeInt($_ENV['LOGIN_MAX_FAILURES'] ?? 10, 10, 1, 50);
+        $this->lockSeconds = $this->sanitizeInt($_ENV['LOGIN_LOCK_SECONDS'] ?? 600, 600, 0, 3600);
     }
 
     /**
@@ -32,12 +41,34 @@ final class AuthService
             return ['user' => null, 'error' => 'inactive'];
         }
 
-        if (!password_verify($password, $user['password_hash'])) {
-            $this->repo->recordLoginFailure($user['id']);
+        $now = AppTime::now();
+        if (!empty($user['locked_until']) && $user['locked_until'] instanceof \DateTimeImmutable && $user['locked_until'] > $now) {
+            return ['user' => null, 'error' => 'locked'];
+        }
+
+        $verify = $this->hasher->verify($password, $user['password_hash']);
+        if (!$verify['ok']) {
+            try {
+                $status = $this->repo->registerLoginFailureAndMaybeLock((int)$user['id'], $this->maxFailures, $this->lockSeconds);
+                if ($status['locked_until'] instanceof \DateTimeImmutable) {
+                    return ['user' => null, 'error' => 'locked'];
+                }
+            } catch (\Throwable) {
+                // fallback: do not leak details; still deny
+            }
             return ['user' => null, 'error' => 'invalid_password'];
         }
 
         $this->repo->resetLoginFailures($user['id']);
+
+        if ($verify['usedLegacy'] || $this->hasher->shouldRehash($user['password_hash'])) {
+            try {
+                $newHash = $this->hasher->hash($password);
+                $this->repo->updateUserPasswordHash((int)$user['id'], $newHash);
+            } catch (\Throwable) {
+                // ignore rehash failures
+            }
+        }
 
         return [
             'user' => [
@@ -50,5 +81,14 @@ final class AuthService
             ],
             'error' => null,
         ];
+    }
+
+    private function sanitizeInt(int|string $value, int $default, int $min, int $max): int
+    {
+        $intVal = filter_var($value, FILTER_VALIDATE_INT);
+        if ($intVal === false) {
+            return $default;
+        }
+        return max($min, min($max, (int)$intVal));
     }
 }

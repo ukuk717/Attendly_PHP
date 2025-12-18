@@ -119,3 +119,37 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 });
+
+document.addEventListener('DOMContentLoaded', () => {
+  const copyButtons = document.querySelectorAll('[data-copy-text]');
+  copyButtons.forEach((button) => {
+    button.addEventListener('click', async () => {
+      const text = button.getAttribute('data-copy-text') || '';
+      if (!text) {
+        return;
+      }
+      const original = button.textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = 'コピーしました';
+        button.setAttribute('aria-label', 'コピーしました');
+        button.disabled = true;
+        window.setTimeout(() => {
+          button.textContent = original;
+          button.removeAttribute('aria-label');
+          button.disabled = false;
+        }, 1200);
+      } catch (err) {
+        // fallback error handling
+      }        window.setTimeout(() => {
+          button.textContent = original;
+          button.disabled = false;
+        }, 1200);
+      } catch (error) {
+        window.prompt('コピーしてください:', text);
+      }
+    });
+  });
+});

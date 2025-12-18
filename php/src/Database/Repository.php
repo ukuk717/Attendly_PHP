@@ -20,12 +20,12 @@ final class Repository
     }
 
     /**
-     * @return array{id:int, tenant_id:int|null, username:string, email:string, password_hash:string, role:string, must_change_password:bool, status:?string}|null
+     * @return array{id:int, tenant_id:int|null, username:string, email:string, password_hash:string, role:string, employment_type:?string, must_change_password:bool, status:?string, failed_attempts:int, locked_until:?DateTimeImmutable}|null
      */
     public function findUserByEmail(string $email): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, username, email, password_hash, role, must_change_password, status
+            'SELECT id, tenant_id, username, email, password_hash, role, employment_type, must_change_password, status, failed_attempts, locked_until
              FROM users WHERE email = ? LIMIT 1'
         );
         $stmt->execute([$email]);
@@ -40,18 +40,21 @@ final class Repository
             'email' => (string)$row['email'],
             'password_hash' => (string)$row['password_hash'],
             'role' => (string)$row['role'],
+            'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
             'must_change_password' => (bool)$row['must_change_password'],
             'status' => $row['status'] !== null ? (string)$row['status'] : null,
+            'failed_attempts' => (int)$row['failed_attempts'],
+            'locked_until' => AppTime::fromStorage($row['locked_until']),
         ];
     }
 
     /**
-     * @return array{id:int, tenant_id:int|null, username:string, email:string, password_hash:string, role:string, must_change_password:bool, status:?string, failed_attempts:int, locked_until:?DateTimeImmutable}|null
+     * @return array{id:int, tenant_id:int|null, username:string, email:string, password_hash:string, role:string, employment_type:?string, must_change_password:bool, status:?string, failed_attempts:int, locked_until:?DateTimeImmutable}|null
      */
     public function findUserById(int $id): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, username, email, password_hash, role, must_change_password, status, failed_attempts, locked_until
+            'SELECT id, tenant_id, username, email, password_hash, role, employment_type, must_change_password, status, failed_attempts, locked_until
              FROM users WHERE id = ? LIMIT 1'
         );
         $stmt->execute([$id]);
@@ -66,6 +69,7 @@ final class Repository
             'email' => (string)$row['email'],
             'password_hash' => (string)$row['password_hash'],
             'role' => (string)$row['role'],
+            'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
             'must_change_password' => (bool)$row['must_change_password'],
             'status' => $row['status'] !== null ? (string)$row['status'] : null,
             'failed_attempts' => (int)$row['failed_attempts'],
@@ -110,6 +114,7 @@ final class Repository
      *   email:string,
      *   password_hash:string,
      *   role:string,
+     *   employment_type?:?string,
      *   status:string,
      *   must_change_password?:bool,
      *   first_name?:string,
@@ -121,8 +126,8 @@ final class Repository
     {
         $now = AppTime::now();
         $stmt = $this->pdo->prepare(
-            'INSERT INTO users (tenant_id, username, email, password_hash, role, must_change_password, first_name, last_name, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO users (tenant_id, username, email, password_hash, role, employment_type, must_change_password, first_name, last_name, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['tenant_id'] ?? null,
@@ -130,6 +135,7 @@ final class Repository
             $data['email'],
             $data['password_hash'],
             $data['role'],
+            $data['employment_type'] ?? null,
             !empty($data['must_change_password']) ? 1 : 0,
             $data['first_name'] ?? null,
             $data['last_name'] ?? null,
@@ -168,10 +174,87 @@ final class Repository
         $stmt->execute([$status, $this->formatDateTime($now), $userId]);
     }
 
+    public function updateUserEmploymentType(int $userId, ?string $employmentType): void
+    {
+        $value = $employmentType !== null ? strtolower(trim($employmentType)) : null;
+        if ($value === '') {
+            $value = null;
+        }
+        $allowed = [null, 'part_time', 'full_time'];
+        if (!in_array($value, $allowed, true)) {
+            throw new RuntimeException('雇用区分が不正です。');
+        }
+        $stmt = $this->pdo->prepare('UPDATE users SET employment_type = ? WHERE id = ?');
+        $stmt->execute([$value, $userId]);
+    }
+
     public function resetLoginFailures(int $userId): void
     {
-        $stmt = $this->pdo->prepare('UPDATE users SET failed_attempts = 0 WHERE id = ?');
+        $stmt = $this->pdo->prepare('UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = ?');
         $stmt->execute([$userId]);
+    }
+
+    /**
+     * ログイン失敗回数を加算し、しきい値到達時にロック（locked_until）を設定する。
+     *
+     * @return array{failed_attempts:int,locked_until:?DateTimeImmutable}
+     */
+    public function registerLoginFailureAndMaybeLock(int $userId, int $maxAttempts, int $lockSeconds): array
+    {
+        $maxAttempts = max(1, min(50, $maxAttempts));
+        $lockSeconds = max(0, min(3600, $lockSeconds));
+
+        $started = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $started = true;
+        }
+        try {
+            $stmt = $this->pdo->prepare('SELECT failed_attempts, locked_until FROM users WHERE id = ? FOR UPDATE');
+            $stmt->execute([$userId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($row)) {
+                if ($started) {
+                    $this->pdo->rollBack();
+                }
+                return ['failed_attempts' => 0, 'locked_until' => null];
+            }
+
+            $now = AppTime::now();
+            $lockedUntil = AppTime::fromStorage($row['locked_until']);
+            $attempts = (int)$row['failed_attempts'];
+            if ($lockedUntil !== null && $lockedUntil <= $now) {
+                $lockedUntil = null;
+                $attempts = 0;
+            }
+
+            $attempts++;
+            if ($lockSeconds > 0 && $attempts >= $maxAttempts) {
+                $lockedUntil = $now->modify('+' . $lockSeconds . ' seconds');
+                $attempts = 0;
+            }
+
+            $update = $this->pdo->prepare('UPDATE users SET failed_attempts = ?, locked_until = ? WHERE id = ?');
+            $update->execute([
+                $attempts,
+                $lockedUntil ? $this->formatDateTime($lockedUntil) : null,
+                $userId,
+            ]);
+
+            if ($started) {
+                $this->pdo->commit();
+            }
+
+            return [
+                'failed_attempts' => $attempts,
+                'locked_until' => $lockedUntil,
+            ];
+        } catch (\Throwable $e) {
+            if ($started && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -1021,6 +1104,12 @@ final class Repository
         $stmt->execute([$passwordHash, $userId]);
     }
 
+    public function updateUserPasswordHash(int $userId, string $passwordHash): void
+    {
+        $stmt = $this->pdo->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+        $stmt->execute([$passwordHash, $userId]);
+    }
+
     public function updateUserEmail(int $userId, string $email): void
     {
         $normalized = strtolower(trim($email));
@@ -1034,12 +1123,12 @@ final class Repository
     }
 
     /**
-     * @return array{id:int,tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool}|null
+     * @return array{id:int,tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool}|null
      */
     public function findRoleCodeByCode(string $code): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, code, expires_at, max_uses, usage_count, is_disabled
+            'SELECT id, tenant_id, code, employment_type, expires_at, max_uses, usage_count, is_disabled
              FROM role_codes WHERE code = ? LIMIT 1'
         );
         $stmt->execute([$code]);
@@ -1051,6 +1140,7 @@ final class Repository
             'id' => (int)$row['id'],
             'tenant_id' => (int)$row['tenant_id'],
             'code' => (string)$row['code'],
+            'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
             'expires_at' => AppTime::fromStorage($row['expires_at']),
             'max_uses' => $row['max_uses'] !== null ? (int)$row['max_uses'] : null,
             'usage_count' => (int)$row['usage_count'],
@@ -1065,12 +1155,12 @@ final class Repository
     }
 
     /**
-     * @return array{id:int,tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool}|null
+     * @return array{id:int,tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool}|null
      */
     public function findRoleCodeById(int $id): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, code, expires_at, max_uses, usage_count, is_disabled
+            'SELECT id, tenant_id, code, employment_type, expires_at, max_uses, usage_count, is_disabled
              FROM role_codes WHERE id = ? LIMIT 1'
         );
         $stmt->execute([$id]);
@@ -1082,6 +1172,7 @@ final class Repository
             'id' => (int)$row['id'],
             'tenant_id' => (int)$row['tenant_id'],
             'code' => (string)$row['code'],
+            'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
             'expires_at' => AppTime::fromStorage($row['expires_at']),
             'max_uses' => $row['max_uses'] !== null ? (int)$row['max_uses'] : null,
             'usage_count' => (int)$row['usage_count'],
@@ -1090,19 +1181,20 @@ final class Repository
     }
 
     /**
-     * @param array{tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,created_by:int} $data
-     * @return array{id:int,tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool,created_at:DateTimeImmutable}
+     * @param array{tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,created_by:int} $data
+     * @return array{id:int,tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool,created_at:DateTimeImmutable}
      */
     public function createRoleCode(array $data): array
     {
         $now = AppTime::now();
         $stmt = $this->pdo->prepare(
-            'INSERT INTO role_codes (tenant_id, code, expires_at, max_uses, usage_count, is_disabled, created_by, created_at)
-             VALUES (?, ?, ?, ?, 0, 0, ?, ?)'
+            'INSERT INTO role_codes (tenant_id, code, employment_type, expires_at, max_uses, usage_count, is_disabled, created_by, created_at)
+             VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)'
         );
         $stmt->execute([
             $data['tenant_id'],
             $data['code'],
+            $data['employment_type'] ?? null,
             $data['expires_at'] !== null ? $this->formatDateTime($data['expires_at']) : null,
             $data['max_uses'] ?? null,
             $data['created_by'],
@@ -1113,6 +1205,7 @@ final class Repository
             'id' => $id,
             'tenant_id' => $data['tenant_id'],
             'code' => $data['code'],
+            'employment_type' => $data['employment_type'] ?? null,
             'expires_at' => $data['expires_at'],
             'max_uses' => $data['max_uses'] ?? null,
             'usage_count' => 0,
@@ -1122,13 +1215,13 @@ final class Repository
     }
 
     /**
-     * @return array<int, array{id:int,tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool,created_at:DateTimeImmutable}>
+     * @return array<int, array{id:int,tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool,created_at:DateTimeImmutable}>
      */
     public function listRoleCodes(int $tenantId, int $limit = 100): array
     {
         $limit = max(1, min(500, $limit));
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, code, expires_at, max_uses, usage_count, is_disabled, created_at
+            'SELECT id, tenant_id, code, employment_type, expires_at, max_uses, usage_count, is_disabled, created_at
              FROM role_codes
              WHERE tenant_id = ?
              ORDER BY created_at DESC
@@ -1144,6 +1237,7 @@ final class Repository
                 'id' => (int)$row['id'],
                 'tenant_id' => (int)$row['tenant_id'],
                 'code' => (string)$row['code'],
+                'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
                 'expires_at' => AppTime::fromStorage($row['expires_at']),
                 'max_uses' => $row['max_uses'] !== null ? (int)$row['max_uses'] : null,
                 'usage_count' => (int)$row['usage_count'],
@@ -1165,7 +1259,7 @@ final class Repository
             throw new RuntimeException('incrementRoleCodeWithLimit はトランザクション内で呼び出してください。');
         }
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, code, expires_at, max_uses, usage_count, is_disabled
+            'SELECT id, tenant_id, code, employment_type, expires_at, max_uses, usage_count, is_disabled
              FROM role_codes
              WHERE id = ?
              FOR UPDATE'
@@ -1190,6 +1284,7 @@ final class Repository
             'id' => (int)$row['id'],
             'tenant_id' => (int)$row['tenant_id'],
             'code' => (string)$row['code'],
+            'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
             'expires_at' => AppTime::fromStorage($row['expires_at']),
             'max_uses' => $maxUses,
             'usage_count' => $newUsage,
@@ -1274,6 +1369,7 @@ final class Repository
             $started = true;
         }
         try {
+            $autoClosedBreak = false;
             $stmt = $this->pdo->prepare(
                 'SELECT id FROM work_sessions WHERE user_id = ? AND end_time IS NULL AND archived_at IS NULL ORDER BY start_time DESC LIMIT 1 FOR UPDATE'
             );
@@ -1283,6 +1379,18 @@ final class Repository
                 $sessionId = (int)$row['id'];
                 $update = $this->pdo->prepare('UPDATE work_sessions SET end_time = ? WHERE id = ?');
                 $update->execute([$this->formatDateTime($now), $sessionId]);
+                try {
+                    $breakUpdate = $this->pdo->prepare(
+                        'UPDATE work_session_breaks SET end_time = ? WHERE work_session_id = ? AND end_time IS NULL'
+                    );
+                    $breakUpdate->execute([$this->formatDateTime($now), $sessionId]);
+                    $autoClosedBreak = $breakUpdate->rowCount() > 0;
+                } catch (\PDOException $e) {
+                    // 移行途中でテーブル未作成の場合に全体を落とさない（要: DB適用）
+                    if ($e->getCode() !== '42S02') {
+                        throw $e;
+                    }
+                }
                 $session = $this->findWorkSessionById($sessionId);
                 $status = 'closed';
             } else {
@@ -1310,7 +1418,350 @@ final class Repository
             }
             throw $e;
         }
-        return ['status' => $status, 'session' => $session];
+        return ['status' => $status, 'session' => $session, 'break_auto_closed' => $autoClosedBreak];
+    }
+
+    /**
+     * @return array<int, array{
+     *   id:int,
+     *   work_session_id:int,
+     *   break_type:string,
+     *   is_compensated:bool,
+     *   start_time:DateTimeImmutable,
+     *   end_time:?DateTimeImmutable,
+     *   note:?string
+     * }>
+     */
+    public function listWorkSessionBreaksBySessionIds(array $workSessionIds): array
+    {
+        $ids = array_values(array_unique(array_map(static fn($id): int => (int)$id, $workSessionIds)));
+        $ids = array_values(array_filter($ids, static fn(int $id): bool => $id > 0));
+        if ($ids === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $stmt = $this->pdo->prepare(
+            "SELECT id, work_session_id, break_type, is_compensated, start_time, end_time, note
+             FROM work_session_breaks
+             WHERE work_session_id IN ({$placeholders})
+             ORDER BY work_session_id ASC, start_time ASC, id ASC"
+        );
+        $stmt->execute($ids);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'work_session_id' => (int)$row['work_session_id'],
+                'break_type' => (string)$row['break_type'],
+                'is_compensated' => (bool)$row['is_compensated'],
+                'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+                'end_time' => AppTime::fromStorage($row['end_time']),
+                'note' => $row['note'] !== null ? (string)$row['note'] : null,
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * @return array<int, array{
+     *   id:int,
+     *   work_session_id:int,
+     *   break_type:string,
+     *   is_compensated:bool,
+     *   start_time:DateTimeImmutable,
+     *   end_time:?DateTimeImmutable,
+     *   note:?string
+     * }>
+     */
+    public function listWorkSessionBreaksBySessionId(int $workSessionId): array
+    {
+        return $this->listWorkSessionBreaksBySessionIds([$workSessionId]);
+    }
+
+    /**
+     * @return array{id:int,work_session_id:int,break_type:string,is_compensated:bool,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,note:?string}|null
+     */
+    public function findOpenWorkSessionBreak(int $workSessionId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, work_session_id, break_type, is_compensated, start_time, end_time, note
+             FROM work_session_breaks
+             WHERE work_session_id = ? AND end_time IS NULL
+             ORDER BY start_time DESC
+             LIMIT 1'
+        );
+        $stmt->execute([$workSessionId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'work_session_id' => (int)$row['work_session_id'],
+            'break_type' => (string)$row['break_type'],
+            'is_compensated' => (bool)$row['is_compensated'],
+            'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+            'end_time' => AppTime::fromStorage($row['end_time']),
+            'note' => $row['note'] !== null ? (string)$row['note'] : null,
+        ];
+    }
+
+    /**
+     * 従業員の休憩開始（勤務中セッションが必要、すでに休憩中ならエラー）。
+     *
+     * @return array{id:int,work_session_id:int,break_type:string,is_compensated:bool,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,note:?string}
+     */
+    public function startWorkSessionBreakAtomic(int $userId, DateTimeImmutable $now, string $breakType = 'rest'): array
+    {
+        $breakType = strtolower(trim($breakType));
+        if (!in_array($breakType, ['rest', 'other'], true)) {
+            throw new RuntimeException('休憩種別が不正です。');
+        }
+
+        $started = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $started = true;
+        }
+        try {
+            $sessionStmt = $this->pdo->prepare(
+                'SELECT id, start_time FROM work_sessions
+                 WHERE user_id = ? AND end_time IS NULL AND archived_at IS NULL
+                 ORDER BY start_time DESC
+                 LIMIT 1
+                 FOR UPDATE'
+            );
+            $sessionStmt->execute([$userId]);
+            $sessionRow = $sessionStmt->fetch(PDO::FETCH_ASSOC);
+            if ($sessionRow === false) {
+                throw new RuntimeException('勤務中のセッションが見つかりません。先に勤務開始を記録してください。');
+            }
+            $sessionId = (int)$sessionRow['id'];
+            $sessionStart = AppTime::fromStorage((string)$sessionRow['start_time']) ?? AppTime::now();
+            if ($now < $sessionStart) {
+                throw new RuntimeException('休憩開始時刻が不正です。');
+            }
+
+            $openStmt = $this->pdo->prepare(
+                'SELECT id FROM work_session_breaks WHERE work_session_id = ? AND end_time IS NULL LIMIT 1 FOR UPDATE'
+            );
+            $openStmt->execute([$sessionId]);
+            if ($openStmt->fetch(PDO::FETCH_ASSOC) !== false) {
+                throw new RuntimeException('すでに休憩中です。休憩終了を記録してください。');
+            }
+
+            $insert = $this->pdo->prepare(
+                'INSERT INTO work_session_breaks (work_session_id, break_type, is_compensated, start_time, end_time, note, created_at)
+                 VALUES (?, ?, 0, ?, NULL, NULL, ?)'
+            );
+            $insert->execute([$sessionId, $breakType, $this->formatDateTime($now), $this->formatDateTime($now)]);
+            $breakId = (int)$this->pdo->lastInsertId();
+
+            $created = $this->pdo->prepare(
+                'SELECT id, work_session_id, break_type, is_compensated, start_time, end_time, note
+                 FROM work_session_breaks WHERE id = ? LIMIT 1'
+            );
+            $created->execute([$breakId]);
+            $row = $created->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                throw new RuntimeException('休憩レコードを取得できませんでした。');
+            }
+
+            if ($started) {
+                $this->pdo->commit();
+            }
+
+            return [
+                'id' => (int)$row['id'],
+                'work_session_id' => (int)$row['work_session_id'],
+                'break_type' => (string)$row['break_type'],
+                'is_compensated' => (bool)$row['is_compensated'],
+                'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+                'end_time' => AppTime::fromStorage($row['end_time']),
+                'note' => $row['note'] !== null ? (string)$row['note'] : null,
+            ];
+        } catch (\Throwable $e) {
+            if ($started && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * 従業員の休憩終了（休憩中レコードが必要）。
+     *
+     * @return array{id:int,work_session_id:int,break_type:string,is_compensated:bool,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,note:?string}
+     */
+    public function endWorkSessionBreakAtomic(int $userId, DateTimeImmutable $now): array
+    {
+        $started = false;
+        if (!$this->pdo->inTransaction()) {
+            $this->pdo->beginTransaction();
+            $started = true;
+        }
+        try {
+            $sessionStmt = $this->pdo->prepare(
+                'SELECT id FROM work_sessions
+                 WHERE user_id = ? AND end_time IS NULL AND archived_at IS NULL
+                 ORDER BY start_time DESC
+                 LIMIT 1
+                 FOR UPDATE'
+            );
+            $sessionStmt->execute([$userId]);
+            $sessionRow = $sessionStmt->fetch(PDO::FETCH_ASSOC);
+            if ($sessionRow === false) {
+                throw new RuntimeException('勤務中のセッションが見つかりません。');
+            }
+            $sessionId = (int)$sessionRow['id'];
+
+            $breakStmt = $this->pdo->prepare(
+                'SELECT id, start_time FROM work_session_breaks
+                 WHERE work_session_id = ? AND end_time IS NULL
+                 ORDER BY start_time DESC
+                 LIMIT 1
+                 FOR UPDATE'
+            );
+            $breakStmt->execute([$sessionId]);
+            $breakRow = $breakStmt->fetch(PDO::FETCH_ASSOC);
+            if ($breakRow === false) {
+                throw new RuntimeException('休憩中ではありません。');
+            }
+            $breakId = (int)$breakRow['id'];
+            $breakStart = AppTime::fromStorage((string)$breakRow['start_time']) ?? AppTime::now();
+            if ($now <= $breakStart) {
+                throw new RuntimeException('休憩終了時刻が不正です。');
+            }
+
+            $update = $this->pdo->prepare(
+                'UPDATE work_session_breaks SET end_time = ? WHERE id = ?'
+            );
+            $update->execute([$this->formatDateTime($now), $breakId]);
+
+            $created = $this->pdo->prepare(
+                'SELECT id, work_session_id, break_type, is_compensated, start_time, end_time, note
+                 FROM work_session_breaks WHERE id = ? LIMIT 1'
+            );
+            $created->execute([$breakId]);
+            $row = $created->fetch(PDO::FETCH_ASSOC);
+            if ($row === false) {
+                throw new RuntimeException('休憩レコードを取得できませんでした。');
+            }
+
+            if ($started) {
+                $this->pdo->commit();
+            }
+
+            return [
+                'id' => (int)$row['id'],
+                'work_session_id' => (int)$row['work_session_id'],
+                'break_type' => (string)$row['break_type'],
+                'is_compensated' => (bool)$row['is_compensated'],
+                'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+                'end_time' => AppTime::fromStorage($row['end_time']),
+                'note' => $row['note'] !== null ? (string)$row['note'] : null,
+            ];
+        } catch (\Throwable $e) {
+            if ($started && $this->pdo->inTransaction()) {
+                $this->pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * @return array{id:int,work_session_id:int,break_type:string,is_compensated:bool,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,note:?string}|null
+     */
+    public function findWorkSessionBreakById(int $breakId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, work_session_id, break_type, is_compensated, start_time, end_time, note
+             FROM work_session_breaks
+             WHERE id = ? LIMIT 1'
+        );
+        $stmt->execute([$breakId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'work_session_id' => (int)$row['work_session_id'],
+            'break_type' => (string)$row['break_type'],
+            'is_compensated' => (bool)$row['is_compensated'],
+            'start_time' => AppTime::fromStorage((string)$row['start_time']) ?? AppTime::now(),
+            'end_time' => AppTime::fromStorage($row['end_time']),
+            'note' => $row['note'] !== null ? (string)$row['note'] : null,
+        ];
+    }
+
+    /**
+     * @param array{
+     *   work_session_id:int,
+     *   break_type:string,
+     *   is_compensated:bool,
+     *   start_time:DateTimeImmutable,
+     *   end_time:?DateTimeImmutable,
+     *   note:?string
+     * } $data
+     * @return array{id:int,work_session_id:int,break_type:string,is_compensated:bool,start_time:DateTimeImmutable,end_time:?DateTimeImmutable,note:?string}
+     */
+    public function createWorkSessionBreak(array $data): array
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO work_session_breaks (work_session_id, break_type, is_compensated, start_time, end_time, note, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
+        );
+        $now = AppTime::now();
+        $stmt->execute([
+            (int)$data['work_session_id'],
+            (string)$data['break_type'],
+            !empty($data['is_compensated']) ? 1 : 0,
+            $this->formatDateTime($data['start_time']),
+            $data['end_time'] !== null ? $this->formatDateTime($data['end_time']) : null,
+            $data['note'] !== null ? (string)$data['note'] : null,
+            $this->formatDateTime($now),
+        ]);
+        $breakId = (int)$this->pdo->lastInsertId();
+        $created = $this->findWorkSessionBreakById($breakId);
+        if ($created === null) {
+            throw new RuntimeException('休憩レコードを取得できませんでした。');
+        }
+        return $created;
+    }
+
+    /**
+     * @param array{
+     *   break_type:string,
+     *   is_compensated:bool,
+     *   start_time:DateTimeImmutable,
+     *   end_time:?DateTimeImmutable,
+     *   note:?string
+     * } $data
+     */
+    public function updateWorkSessionBreak(int $breakId, array $data): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE work_session_breaks
+             SET break_type = ?, is_compensated = ?, start_time = ?, end_time = ?, note = ?
+             WHERE id = ?'
+        );
+        $stmt->execute([
+            (string)$data['break_type'],
+            !empty($data['is_compensated']) ? 1 : 0,
+            $this->formatDateTime($data['start_time']),
+            $data['end_time'] !== null ? $this->formatDateTime($data['end_time']) : null,
+            $data['note'] !== null ? (string)$data['note'] : null,
+            $breakId,
+        ]);
+    }
+
+    public function deleteWorkSessionBreak(int $breakId): void
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM work_session_breaks WHERE id = ?');
+        $stmt->execute([$breakId]);
     }
 
     /**
@@ -1767,6 +2218,44 @@ final class Repository
         ];
     }
 
+    /**
+     * @return array<int, array{id:int,stored_file_path:string,sent_at:DateTimeImmutable}>
+     */
+    public function listPayrollRecordsForCleanup(DateTimeImmutable $sentBefore, int $limit = 200): array
+    {
+        $limit = max(1, min(5000, $limit));
+        $stmt = $this->pdo->prepare(
+            'SELECT id, stored_file_path, sent_at
+             FROM payroll_records
+             WHERE archived_at IS NULL AND sent_at < ?
+             ORDER BY sent_at ASC
+             LIMIT ?'
+        );
+        $stmt->bindValue(1, $this->formatDateTime($sentBefore), PDO::PARAM_STR);
+        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'stored_file_path' => (string)$row['stored_file_path'],
+                'sent_at' => AppTime::fromStorage((string)$row['sent_at']) ?? AppTime::now(),
+            ];
+        }
+        return $result;
+    }
+
+    public function archivePayrollRecord(int $id, DateTimeImmutable $archivedAt): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE payroll_records
+             SET archived_at = ?
+             WHERE id = ? AND archived_at IS NULL'
+        );
+        $stmt->execute([$this->formatDateTime($archivedAt), $id]);
+    }
+
     public function deletePayrollRecord(int $id): void
     {
         $stmt = $this->pdo->prepare('DELETE FROM payroll_records WHERE id = ?');
@@ -1811,13 +2300,13 @@ final class Repository
     /**
      * 有効/無効を含む従業員一覧を取得する。
      *
-     * @return array<int, array{id:int,username:string,email:string,status:string,deactivated_at:?DateTimeImmutable}>
+     * @return array<int, array{id:int,username:string,email:string,employment_type:?string,status:string,deactivated_at:?DateTimeImmutable}>
      */
     public function listEmployeesByTenantIncludingInactive(int $tenantId, int $limit = 500): array
     {
         $limit = max(1, min(500, $limit));
         $stmt = $this->pdo->prepare(
-            'SELECT id, username, email, status, deactivated_at
+            'SELECT id, username, email, employment_type, status, deactivated_at
              FROM users
              WHERE tenant_id = ? AND role = "employee"
              ORDER BY id ASC
@@ -1833,6 +2322,7 @@ final class Repository
                 'id' => (int)$row['id'],
                 'username' => (string)$row['username'],
                 'email' => (string)$row['email'],
+                'employment_type' => $row['employment_type'] !== null ? (string)$row['employment_type'] : null,
                 'status' => (string)$row['status'],
                 'deactivated_at' => AppTime::fromStorage($row['deactivated_at']),
             ];
@@ -1868,6 +2358,125 @@ final class Repository
     {
         $stmt = $this->pdo->prepare('UPDATE tenants SET require_employee_email_verification = ? WHERE id = ?');
         $stmt->execute([$requireEmailVerification ? 1 : 0, $tenantId]);
+    }
+
+    public function countTenantsForPlatform(): int
+    {
+        $stmt = $this->pdo->query('SELECT COUNT(*) AS c FROM tenants');
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || !isset($row['c'])) {
+            return 0;
+        }
+        return (int)$row['c'];
+    }
+
+    /**
+     * @return array<int, array{
+     *   id:int,
+     *   tenant_uid:string,
+     *   name:?string,
+     *   contact_email:?string,
+     *   status:string,
+     *   deactivated_at:?DateTimeImmutable,
+     *   require_employee_email_verification:bool,
+     *   created_at:DateTimeImmutable
+     * }>
+     */
+    public function listTenantsForPlatform(int $limit = 200, int $offset = 0): array
+    {
+        $limit = max(1, min(500, $limit));
+        $offset = max(0, $offset);
+        $stmt = $this->pdo->prepare(
+            'SELECT id, tenant_uid, name, contact_email, status, deactivated_at, require_employee_email_verification, created_at
+             FROM tenants
+             ORDER BY id ASC
+             LIMIT ? OFFSET ?'
+        );
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'tenant_uid' => (string)$row['tenant_uid'],
+                'name' => $row['name'] !== null ? (string)$row['name'] : null,
+                'contact_email' => $row['contact_email'] !== null ? (string)$row['contact_email'] : null,
+                'status' => (string)$row['status'],
+                'deactivated_at' => AppTime::fromStorage($row['deactivated_at']),
+                'require_employee_email_verification' => (bool)$row['require_employee_email_verification'],
+                'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+            ];
+        }
+        return $result;
+    }
+
+    /**
+     * @return array{id:int,tenant_uid:string,name:?string,contact_email:?string,status:string}
+     */
+    public function createTenant(string $name, ?string $contactEmail = null): array
+    {
+        $name = trim($name);
+        if ($name === '' || mb_strlen($name, 'UTF-8') > 255) {
+            throw new \InvalidArgumentException('テナント名が不正です。');
+        }
+        if (preg_match('/[\r\n]/', $name)) {
+            throw new \InvalidArgumentException('テナント名に改行を含めることはできません。');
+        }
+        $email = $contactEmail !== null ? strtolower(trim($contactEmail)) : null;
+        if ($email !== null) {
+            if ($email === '') {
+                $email = null;
+            } elseif (mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $email)) {
+                throw new \InvalidArgumentException('連絡先メールアドレスが不正です。');
+            }
+        }
+
+        $now = $this->formatDateTime(AppTime::now());
+        $attempts = 0;
+        while (true) {
+            $attempts++;
+            if ($attempts > 5) {
+                throw new RuntimeException('テナントUIDの生成に失敗しました。');
+            }
+            $tenantUid = bin2hex(random_bytes(16));
+            try {
+                $stmt = $this->pdo->prepare(
+                    'INSERT INTO tenants (tenant_uid, name, contact_email, status, deactivated_at, require_employee_email_verification, created_at)
+                     VALUES (?, ?, ?, "active", NULL, 0, ?)'
+                );
+                $stmt->execute([$tenantUid, $name, $email, $now]);
+                $id = (int)$this->pdo->lastInsertId();
+                return [
+                    'id' => $id,
+                    'tenant_uid' => $tenantUid,
+                    'name' => $name,
+                    'contact_email' => $email,
+                    'status' => 'active',
+                ];
+            } catch (\PDOException $e) {
+                if ($e->getCode() === '23000') {
+                    continue;
+                }
+                throw $e;
+            }
+        }
+    }
+
+    public function updateTenantStatus(int $tenantId, string $status): void
+    {
+        $status = trim($status);
+        if (!in_array($status, ['active', 'inactive'], true)) {
+            throw new \InvalidArgumentException('無効なステータスです。');
+        }
+        if ($status === 'active') {
+            $stmt = $this->pdo->prepare('UPDATE tenants SET status = "active", deactivated_at = NULL WHERE id = ?');
+            $stmt->execute([$tenantId]);
+            return;
+        }
+        $stmt = $this->pdo->prepare('UPDATE tenants SET status = "inactive", deactivated_at = ? WHERE id = ?');
+        $stmt->execute([$this->formatDateTime(AppTime::now()), $tenantId]);
     }
 
     public function createPasswordResetToken(int $userId, string $tokenHash, DateTimeImmutable $expiresAt): void

@@ -18,8 +18,8 @@ final class RoleCodeService
     }
 
     /**
-     * @param array{tenant_id:int,created_by:int,max_uses:?int,expires_at:?DateTimeImmutable} $data
-     * @return array{id:int,tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool}
+     * @param array{tenant_id:int,created_by:int,employment_type?:?string,max_uses:?int,expires_at:?DateTimeImmutable} $data
+     * @return array{id:int,tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool}
      */
     public function create(array $data): array
     {
@@ -33,9 +33,19 @@ final class RoleCodeService
         }
 
         $code = $this->generateUniqueCode();
+        $employmentType = isset($data['employment_type']) ? strtolower(trim((string)$data['employment_type'])) : null;
+        if ($employmentType === '') {
+            $employmentType = null;
+        }
+        $allowedTypes = [null, 'part_time', 'full_time'];
+        if (!in_array($employmentType, $allowedTypes, true)) {
+            throw new RuntimeException('雇用区分が不正です。');
+        }
+
         $payload = [
             'tenant_id' => (int)$data['tenant_id'],
             'code' => $code,
+            'employment_type' => $employmentType,
             'expires_at' => ($data['expires_at'] ?? null) instanceof DateTimeImmutable ? $data['expires_at'] : null,
             'max_uses' => isset($data['max_uses']) ? (int)$data['max_uses'] : null,
             'created_by' => (int)$data['created_by'],
@@ -45,7 +55,7 @@ final class RoleCodeService
     }
 
     /**
-     * @return array<int, array{id:int,tenant_id:int,code:string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool,created_at:DateTimeImmutable}>
+     * @return array<int, array{id:int,tenant_id:int,code:string,employment_type:?string,expires_at:?DateTimeImmutable,max_uses:?int,usage_count:int,is_disabled:bool,created_at:DateTimeImmutable}>
      */
     public function listForTenant(int $tenantId, int $limit = 100): array
     {

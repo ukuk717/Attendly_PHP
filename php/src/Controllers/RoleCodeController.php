@@ -10,6 +10,8 @@ use Attendly\Security\CsrfToken;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\View;
+use chillerlan\QRCode\QRCode;
+use chillerlan\QRCode\QROptions;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -36,6 +38,7 @@ final class RoleCodeController
                 return [
                     'id' => $row['id'],
                     'code' => $row['code'],
+                    'employment_type' => $row['employment_type'] ?? null,
                     'expires_at' => $row['expires_at']?->format(\DateTimeInterface::ATOM),
                     'max_uses' => $row['max_uses'],
                     'usage_count' => $row['usage_count'],
@@ -68,15 +71,22 @@ final class RoleCodeController
                 return $this->error($response, 400, 'invalid_expires_at');
             }
         }
+        try {
+            $employmentType = $this->normalizeEmploymentType($data['employment_type'] ?? ($data['employmentType'] ?? null));
+        } catch (\RuntimeException) {
+            return $this->error($response, 400, 'invalid_employment_type');
+        }
         $created = $this->service->create([
             'tenant_id' => $user['tenant_id'],
             'created_by' => $user['id'],
+            'employment_type' => $employmentType,
             'max_uses' => $maxUses,
             'expires_at' => $expiresAt,
         ]);
         $payload = [
             'id' => $created['id'],
             'code' => $created['code'],
+            'employment_type' => $created['employment_type'] ?? null,
             'expires_at' => $created['expires_at']?->format(\DateTimeInterface::ATOM),
             'max_uses' => $created['max_uses'],
             'usage_count' => $created['usage_count'],
@@ -117,12 +127,14 @@ final class RoleCodeController
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
         $items = $this->service->listForTenant($user['tenant_id'], 200);
+        $baseUrl = $this->getBaseUrl($request);
         $html = $this->view->renderWithLayout('admin_role_codes', [
             'title' => 'ロールコード管理',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
             'items' => $items,
+            'baseUrl' => $baseUrl,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -156,9 +168,16 @@ final class RoleCodeController
             }
         }
         try {
+            $employmentType = $this->normalizeEmploymentType($data['employment_type'] ?? null);
+        } catch (\RuntimeException) {
+            Flash::add('error', '雇用区分が不正です。');
+            return $response->withStatus(303)->withHeader('Location', '/admin/role-codes');
+        }
+        try {
             $created = $this->service->create([
                 'tenant_id' => $user['tenant_id'],
                 'created_by' => $user['id'],
+                'employment_type' => $employmentType,
                 'max_uses' => $maxUses,
                 'expires_at' => $expiresAt,
             ]);
@@ -167,6 +186,45 @@ final class RoleCodeController
             Flash::add('error', 'ロールコードの発行に失敗しました。');
         }
         return $response->withStatus(303)->withHeader('Location', '/admin/role-codes');
+    }
+
+    public function downloadQr(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        try {
+            $user = $this->requireAdmin($request);
+        } catch (\Throwable) {
+            return $this->error($response, 403, 'forbidden');
+        }
+
+        $roleCodeId = isset($args['id']) ? (int)$args['id'] : 0;
+        if ($roleCodeId <= 0) {
+            return $this->error($response, 400, 'invalid_role_code_id');
+        }
+        $roleCode = $this->repository->findRoleCodeById($roleCodeId);
+        if ($roleCode === null || $roleCode['tenant_id'] !== $user['tenant_id']) {
+            return $this->error($response, 404, 'not_found');
+        }
+
+        $baseUrl = $this->getBaseUrl($request);
+        $registerUrl = rtrim($baseUrl, '/') . '/register?roleCode=' . rawurlencode((string)$roleCode['code']);
+
+        $options = new QROptions([
+            'outputType' => QRCode::OUTPUT_IMAGE_PNG,
+            'eccLevel' => QRCode::ECC_L,
+            'scale' => 6,
+            'imageTransparent' => false,
+        ]);
+        $png = (new QRCode($options))->render($registerUrl);
+
+        $code = (string)$roleCode['code'];
+        $downloadName = 'role_code_' . $code . '.png';
+        $downloadName = str_replace(['"', "\r", "\n"], '', $downloadName);
+        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
+
+        $response->getBody()->write($png);
+        return $response
+            ->withHeader('Content-Type', 'image/png')
+            ->withHeader('Content-Disposition', $disposition);
     }
 
     public function disableFromForm(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
@@ -250,5 +308,56 @@ final class RoleCodeController
         $body = (array)$request->getParsedBody();
         $token = (string)($body['csrf_token'] ?? '');
         return $token !== '' && hash_equals(CsrfToken::getToken(), $token);
+    }
+
+    private function normalizeEmploymentType(mixed $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        $normalized = strtolower(trim((string)$value));
+        if ($normalized === '' || $normalized === 'none') {
+            return null;
+        }
+        if (!in_array($normalized, ['part_time', 'full_time'], true)) {
+            throw new \RuntimeException('雇用区分が不正です。');
+        }
+        return $normalized;
+    }
+
+    private function getBaseUrl(ServerRequestInterface $request): string
+    {
+        $raw = trim((string)($_ENV['APP_BASE_URL'] ?? ''));
+        if ($raw !== '') {
+            $parts = parse_url($raw);
+            if (
+                is_array($parts)
+                && !empty($parts['scheme'])
+                && !empty($parts['host'])
+                && in_array((string)$parts['scheme'], ['http', 'https'], true)
+            ) {
+                $base = (string)$parts['scheme'] . '://' . (string)$parts['host'];
+                if (!empty($parts['port'])) {
+                    $base .= ':' . (int)$parts['port'];
+                }
+                if (!empty($parts['path']) && (string)$parts['path'] !== '/') {
+                    $base .= rtrim((string)$parts['path'], '/');
+                }
+                return rtrim($base, '/');
+            }
+        }
+
+        $uri = $request->getUri();
+        $scheme = $uri->getScheme() !== '' ? $uri->getScheme() : 'https';
+        $host = $uri->getHost();
+        $port = $uri->getPort();
+        $base = $scheme . '://' . $host;
+        if ($port !== null) {
+            $isDefaultPort = ($scheme === 'http' && $port === 80) || ($scheme === 'https' && $port === 443);
+            if (!$isDefaultPort) {
+                $base .= ':' . $port;
+            }
+        }
+        return rtrim($base, '/');
     }
 }

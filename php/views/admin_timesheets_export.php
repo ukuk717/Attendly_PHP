@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>勤怠エクスポート</h2>
-  <p class="form-note">期間と従業員を指定して勤怠データを CSV でダウンロードします。</p>
+  <p class="form-note">期間と従業員を指定して勤怠データを Excel（.xlsx） / PDF でダウンロードします。</p>
 </div>
 
 <section class="card">
@@ -36,6 +36,13 @@
         <?php endforeach; ?>
       </select>
     </div>
-    <button type="submit" class="btn primary">CSVをダウンロード</button>
+    <div class="form-field">
+      <label for="format">出力形式</label>
+      <select name="format" id="format" required>
+        <option value="excel" selected>Excel</option>
+        <option value="pdf">PDF</option>
+      </select>
+    </div>
+    <button type="submit" class="btn primary">ダウンロード</button>
   </form>
 </section>
