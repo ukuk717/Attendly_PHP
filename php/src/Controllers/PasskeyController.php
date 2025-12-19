@@ -29,6 +29,8 @@ final class PasskeyController
     private array $allowedOrigins;
     /** @var string[] */
     private array $allowedFormats;
+    private string $residentKeyRequirement;
+    private string $userVerificationRequirement;
 
     public function __construct(?Repository $repository = null)
     {
@@ -40,6 +42,8 @@ final class PasskeyController
         $this->rpId = $this->resolveRpId();
         $this->allowedOrigins = $this->resolveAllowedOrigins();
         $this->allowedFormats = $this->resolveAllowedFormats();
+        $this->residentKeyRequirement = $this->resolveResidentKeyRequirement();
+        $this->userVerificationRequirement = $this->resolveUserVerificationRequirement();
     }
 
     public function registrationOptions(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -53,7 +57,18 @@ final class PasskeyController
             return $this->json($response, ['error' => 'reauth_required'], 401);
         }
 
-        $currentCount = $this->repository->countPasskeysByUser($user['id']);
+        try {
+            $currentCount = $this->repository->countPasskeysByUser($user['id']);
+        } catch (\PDOException $e) {
+            if ($this->isMissingPasskeyTable($e)) {
+                return $this->passkeyTableUnavailable($response);
+            }
+            error_log('[passkey] countPasskeysByUser failed');
+            return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+        } catch (\Throwable) {
+            error_log('[passkey] countPasskeysByUser failed');
+            return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+        }
         if ($currentCount >= $this->maxPerUser) {
             return $this->json($response, ['error' => 'limit_reached', 'message' => '登録できるパスキーの上限に達しました。'], 400);
         }
@@ -84,11 +99,22 @@ final class PasskeyController
             }
         }
         $exclude = [];
-        foreach ($this->repository->listPasskeysByUser($user['id']) as $passkey) {
-            $binaryId = Base64Url::decode($passkey['credential_id']);
-            if ($binaryId !== null) {
-                $exclude[] = $binaryId;
+        try {
+            foreach ($this->repository->listPasskeysByUser($user['id']) as $passkey) {
+                $binaryId = Base64Url::decode($passkey['credential_id']);
+                if ($binaryId !== null) {
+                    $exclude[] = $binaryId;
+                }
             }
+        } catch (\PDOException $e) {
+            if ($this->isMissingPasskeyTable($e)) {
+                return $this->passkeyTableUnavailable($response);
+            }
+            error_log('[passkey] listPasskeysByUser failed');
+            return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+        } catch (\Throwable) {
+            error_log('[passkey] listPasskeysByUser failed');
+            return $this->json($response, ['error' => 'passkey_unavailable'], 500);
         }
 
         try {
@@ -97,8 +123,8 @@ final class PasskeyController
                 $userName,
                 $userDisplay,
                 $this->timeoutSeconds,
-                'required',
-                'required',
+                $this->residentKeyRequirement,
+                $this->userVerificationRequirement,
                 null,
                 $exclude
             );
@@ -246,7 +272,18 @@ final class PasskeyController
             if ($lockedUntil instanceof \DateTimeImmutable && $lockedUntil > AppTime::now()) {
                 return $this->json($response, ['error' => 'not_available'], 400);
             }
-            $passkeys = $this->repository->listPasskeysByUser((int)$user['id']);
+            try {
+                $passkeys = $this->repository->listPasskeysByUser((int)$user['id']);
+            } catch (\PDOException $e) {
+                if ($this->isMissingPasskeyTable($e)) {
+                    return $this->passkeyTableUnavailable($response);
+                }
+                error_log('[passkey] listPasskeysByUser failed');
+                return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+            } catch (\Throwable) {
+                error_log('[passkey] listPasskeysByUser failed');
+                return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+            }
             if ($passkeys === []) {
                 return $this->json($response, ['error' => 'not_available'], 400);
             }
@@ -273,7 +310,7 @@ final class PasskeyController
                 true,
                 true,
                 true,
-                'required'
+                $this->userVerificationRequirement
             );
         } catch (\Throwable $e) {
             error_log('[passkey] Failed to build login options');
@@ -316,7 +353,18 @@ final class PasskeyController
             return $this->json($response, ['error' => 'invalid_credential'], 400);
         }
 
-        $passkey = $this->repository->findPasskeyByCredentialId($credentialId);
+        try {
+            $passkey = $this->repository->findPasskeyByCredentialId($credentialId);
+        } catch (\PDOException $e) {
+            if ($this->isMissingPasskeyTable($e)) {
+                return $this->passkeyTableUnavailable($response);
+            }
+            error_log('[passkey] findPasskeyByCredentialId failed');
+            return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+        } catch (\Throwable) {
+            error_log('[passkey] findPasskeyByCredentialId failed');
+            return $this->json($response, ['error' => 'passkey_unavailable'], 500);
+        }
         if ($passkey === null) {
             return $this->json($response, ['error' => 'invalid_credential'], 400);
         }
@@ -418,6 +466,14 @@ final class PasskeyController
 
         try {
             $deleted = $this->repository->deletePasskeyById($user['id'], $id);
+        } catch (\PDOException $e) {
+            if ($this->isMissingPasskeyTable($e)) {
+                $this->logPasskeyTableMissing();
+                Flash::add('error', 'パスキー機能を利用できません。');
+                return $response->withStatus(303)->withHeader('Location', '/account');
+            }
+            Flash::add('error', 'パスキーの削除に失敗しました。時間をおいて再度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/account');
         } catch (\Throwable) {
             Flash::add('error', 'パスキーの削除に失敗しました。時間をおいて再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/account');
@@ -520,6 +576,20 @@ final class PasskeyController
         $formats = array_filter(array_map('trim', explode(',', $raw)));
         $formats = array_map('strtolower', $formats);
         return $formats !== [] ? $formats : ['none'];
+    }
+
+    private function resolveResidentKeyRequirement(): string
+    {
+        $raw = strtolower(trim((string)($_ENV['PASSKEY_RESIDENT_KEY'] ?? 'preferred')));
+        $allowed = ['required', 'preferred', 'discouraged'];
+        return in_array($raw, $allowed, true) ? $raw : 'preferred';
+    }
+
+    private function resolveUserVerificationRequirement(): string
+    {
+        $raw = strtolower(trim((string)($_ENV['PASSKEY_USER_VERIFICATION'] ?? 'required')));
+        $allowed = ['required', 'preferred', 'discouraged'];
+        return in_array($raw, $allowed, true) ? $raw : 'required';
     }
 
     private function resolveRpId(): string
@@ -685,5 +755,21 @@ final class PasskeyController
             }
         }
         return true;
+    }
+
+    private function isMissingPasskeyTable(\PDOException $e): bool
+    {
+        return $e->getCode() === '42S02';
+    }
+
+    private function passkeyTableUnavailable(ResponseInterface $response): ResponseInterface
+    {
+        $this->logPasskeyTableMissing();
+        return $this->json($response, ['error' => 'passkey_unavailable'], 503);
+    }
+
+    private function logPasskeyTableMissing(): void
+    {
+        error_log('[passkey] user_passkeys table missing; apply docs/php_mysql_schema.sql');
     }
 }

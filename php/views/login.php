@@ -36,6 +36,7 @@
       <input type="hidden" id="passkey-csrf" value="<?= $e($csrf ?? '') ?>">
       <button type="button" class="btn secondary" data-passkey-login>パスキーでログイン</button>
       <p class="passkey-status" data-passkey-status></p>
+      <p class="form-note">注意: 共有端末ではパスキーを登録しないでください。同一端末で複数アカウントのパスキー運用は想定していません。</p>
     </div>
     <div class="form-links">
       <a class="link" href="/register">従業員登録へ</a>

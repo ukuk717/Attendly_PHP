@@ -77,37 +77,22 @@
         <tr>
           <th>日付</th>
           <th>勤務時間</th>
-          <th>注意</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($dailySummary)): ?>
-          <tr><td colspan="3">記録がありません。</td></tr>
+          <tr><td colspan="2">記録がありません。</td></tr>
         <?php else: ?>
           <?php foreach ($dailySummary as $row): ?>
             <tr>
               <td><?= $e($row['date']) ?></td>
               <td><?= $e($row['formatted']) ?></td>
-              <td>
-                <?php $shortage = (int)($row['break_shortage_minutes'] ?? 0); ?>
-                <?php $edge = !empty($row['edge_break_warning']); ?>
-                <?php if ($shortage > 0): ?>
-                  <span class="status-badge warning">休憩不足</span>
-                  <span class="muted">不足: <?= $e((string)$shortage) ?>分</span>
-                <?php elseif ($edge): ?>
-                  <span class="status-badge warning">要注意</span>
-                  <span class="muted">休憩が端に寄っています</span>
-                <?php else: ?>
-                  -
-                <?php endif; ?>
-              </td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>
       </tbody>
     </table>
   </div>
-  <p class="form-note" style="margin-top: 8px;">休憩は勤務途中に取得してください（初期は注意喚起のみで、入力の強制はしません）。</p>
 </section>
 
 <section class="card">
@@ -119,31 +104,17 @@
           <th>開始</th>
           <th>終了</th>
           <th>勤務時間</th>
-          <th>注意</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($recentSessions)): ?>
-          <tr><td colspan="4">履歴がありません。</td></tr>
+          <tr><td colspan="3">履歴がありません。</td></tr>
         <?php else: ?>
           <?php foreach ($recentSessions as $session): ?>
             <tr>
               <td><?= $e($session['start']) ?></td>
               <td><?= $e($session['end']) ?></td>
               <td><?= $e($session['duration']) ?></td>
-              <td>
-                <?php $shortage = (int)($session['break_shortage_minutes'] ?? 0); ?>
-                <?php $edge = !empty($session['edge_break_warning']); ?>
-                <?php if ($shortage > 0): ?>
-                  <span class="status-badge warning">休憩不足</span>
-                  <span class="muted">不足: <?= $e((string)$shortage) ?>分</span>
-                <?php elseif ($edge): ?>
-                  <span class="status-badge warning">要注意</span>
-                  <span class="muted">休憩が端に寄っています</span>
-                <?php else: ?>
-                  -
-                <?php endif; ?>
-              </td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>

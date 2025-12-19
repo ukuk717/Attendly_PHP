@@ -100,8 +100,30 @@
     if (error === 'csrf_missing') {
       return 'ページを再読み込みしてから再試行してください。';
     }
+    if (error === 'passkey_unavailable') {
+      return 'パスキー機能を利用できません。管理者に確認してください。';
+    }
     if (error === 'not_available') {
       return 'パスキーでのログインが利用できません。';
+    }
+    return 'パスキーの処理に失敗しました。';
+  };
+
+  const formatClientError = (err) => {
+    if (!err) {
+      return 'パスキーの処理に失敗しました。';
+    }
+    if (err.name === 'NotAllowedError') {
+      return 'パスキーの操作がキャンセルされました。';
+    }
+    if (err.name === 'NotSupportedError') {
+      return 'この端末ではパスキーを利用できません。';
+    }
+    if (err.name === 'SecurityError') {
+      return 'URLとパスキー設定が一致しません。HTTPSまたは正しいホスト名でお試しください。';
+    }
+    if (err.name === 'InvalidStateError') {
+      return 'この端末ではパスキーを登録できません。別の端末でお試しください。';
     }
     return 'パスキーの処理に失敗しました。';
   };
@@ -154,11 +176,7 @@
           const redirect = verifyResponse.redirect || '/dashboard';
           window.location.assign(redirect);
         } catch (err) {
-          if (err && err.name === 'AbortError') {
-            setStatus('パスキーの操作を中断しました。', 'error');
-          } else {
-            setStatus('パスキーでログインできませんでした。', 'error');
-          }
+          setStatus(formatClientError(err), 'error');
           loginButton.disabled = false;
         }
       });
@@ -224,11 +242,7 @@
           }
           window.location.reload();
         } catch (err) {
-          if (err && err.name === 'AbortError') {
-            setStatus('パスキーの登録を中断しました。', 'error');
-          } else {
-            setStatus('パスキーの登録に失敗しました。', 'error');
-          }
+          setStatus(formatClientError(err), 'error');
           registerButton.disabled = false;
         }
       });
