@@ -503,6 +503,146 @@ final class Repository
         return (bool)$stmt->fetchColumn();
     }
 
+    /**
+     * @return array<int, array{
+     *   id:int,
+     *   user_id:int,
+     *   name:?string,
+     *   credential_id:string,
+     *   user_handle:string,
+     *   transports:?array,
+     *   sign_count:int,
+     *   last_used_at:?DateTimeImmutable,
+     *   created_at:DateTimeImmutable
+     * }>
+     */
+    public function listPasskeysByUser(int $userId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, name, credential_id, user_handle, transports_json, sign_count, last_used_at, created_at
+             FROM user_passkeys
+             WHERE user_id = ?
+             ORDER BY created_at DESC'
+        );
+        $stmt->execute([$userId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = $this->mapPasskeyRow($row);
+        }
+        return $result;
+    }
+
+    public function countPasskeysByUser(int $userId): int
+    {
+        $stmt = $this->pdo->prepare('SELECT COUNT(*) AS c FROM user_passkeys WHERE user_id = ?');
+        $stmt->execute([$userId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || !isset($row['c'])) {
+            return 0;
+        }
+        return (int)$row['c'];
+    }
+
+    /**
+     * @return array{id:int,user_id:int,name:?string,credential_id:string,user_handle:string,transports:?array,public_key:string,sign_count:int,last_used_at:?DateTimeImmutable,created_at:DateTimeImmutable}|null
+     */
+    public function findPasskeyByCredentialId(string $credentialId): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, name, credential_id, user_handle, transports_json, public_key, sign_count, last_used_at, created_at
+             FROM user_passkeys
+             WHERE credential_id = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$credentialId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        $mapped = $this->mapPasskeyRow($row);
+        return array_merge($mapped, [
+            'public_key' => (string)$row['public_key'],
+        ]);
+    }
+
+    /**
+     * @return array{id:int,user_id:int,name:?string,credential_id:string,user_handle:string,transports:?array,sign_count:int,last_used_at:?DateTimeImmutable,created_at:DateTimeImmutable}
+     */
+    public function createPasskey(
+        int $userId,
+        string $credentialId,
+        string $publicKey,
+        int $signCount,
+        string $userHandle,
+        ?string $name,
+        ?array $transports
+    ): array {
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO user_passkeys (user_id, name, credential_id, public_key, user_handle, transports_json, sign_count, last_used_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?)'
+        );
+        $stmt->execute([
+            $userId,
+            $name,
+            $credentialId,
+            $publicKey,
+            $userHandle,
+            $this->encodeMetadata($transports),
+            max(0, $signCount),
+            $this->formatDateTime($now),
+        ]);
+        $id = (int)$this->pdo->lastInsertId();
+        $row = $this->findPasskeyById($id);
+        if ($row === null) {
+            throw new RuntimeException('パスキーの作成に失敗しました。');
+        }
+        return $row;
+    }
+
+    /**
+     * @return array{id:int,user_id:int,name:?string,credential_id:string,user_handle:string,transports:?array,sign_count:int,last_used_at:?DateTimeImmutable,created_at:DateTimeImmutable}|null
+     */
+    public function findPasskeyById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, name, credential_id, user_handle, transports_json, sign_count, last_used_at, created_at
+             FROM user_passkeys
+             WHERE id = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return $this->mapPasskeyRow($row);
+    }
+
+    public function touchPasskeyUsed(int $id, ?int $signCount = null): void
+    {
+        $now = $this->formatDateTime(AppTime::now());
+        $fields = ['last_used_at = ?', 'updated_at = ?'];
+        $params = [$now, $now];
+        if ($signCount !== null) {
+            $fields[] = 'sign_count = ?';
+            $params[] = max(0, $signCount);
+        }
+        $params[] = $id;
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_passkeys SET ' . implode(', ', $fields) . ' WHERE id = ?'
+        );
+        $stmt->execute($params);
+    }
+
+    public function deletePasskeyById(int $userId, int $id): bool
+    {
+        $stmt = $this->pdo->prepare('DELETE FROM user_passkeys WHERE id = ? AND user_id = ?');
+        $stmt->execute([$id, $userId]);
+        return $stmt->rowCount() > 0;
+    }
+
     public function findTrustedDeviceByHash(int $userId, string $tokenHash): ?array
     {
         $stmt = $this->pdo->prepare(
@@ -1224,7 +1364,7 @@ final class Repository
             'SELECT id, tenant_id, code, employment_type, expires_at, max_uses, usage_count, is_disabled, created_at
              FROM role_codes
              WHERE tenant_id = ?
-             ORDER BY created_at DESC
+             ORDER BY id ASC
              LIMIT ?'
         );
         $stmt->bindValue(1, $tenantId, PDO::PARAM_INT);
@@ -2191,6 +2331,111 @@ final class Repository
         return $result;
     }
 
+    public function countPayrollRecordsByTenantForAdmin(int $tenantId, ?int $employeeId = null): int
+    {
+        if ($employeeId !== null && $employeeId <= 0) {
+            $employeeId = null;
+        }
+        if ($employeeId !== null) {
+            $stmt = $this->pdo->prepare(
+                'SELECT COUNT(*) AS cnt
+                 FROM payroll_records
+                 WHERE tenant_id = ? AND employee_id = ? AND archived_at IS NULL'
+            );
+            $stmt->execute([$tenantId, $employeeId]);
+        } else {
+            $stmt = $this->pdo->prepare(
+                'SELECT COUNT(*) AS cnt
+                 FROM payroll_records
+                 WHERE tenant_id = ? AND archived_at IS NULL'
+            );
+            $stmt->execute([$tenantId]);
+        }
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return (int)($row['cnt'] ?? 0);
+    }
+
+    /**
+     * @return array<int, array{
+     *   id:int,
+     *   tenant_id:int,
+     *   employee_id:int,
+     *   employee_email:?string,
+     *   employee_first_name:?string,
+     *   employee_last_name:?string,
+     *   employee_status:?string,
+     *   original_file_name:string,
+     *   stored_file_path:string,
+     *   mime_type:?string,
+     *   file_size:?int,
+     *   sent_on:DateTimeImmutable,
+     *   sent_at:DateTimeImmutable
+     * }>
+     */
+    public function listPayrollRecordsByTenantForAdmin(int $tenantId, int $limit = 50, int $offset = 0, ?int $employeeId = null): array
+    {
+        $limit = max(1, min(200, $limit));
+        $offset = max(0, $offset);
+        if ($employeeId !== null && $employeeId <= 0) {
+            $employeeId = null;
+        }
+
+        $whereEmployee = $employeeId !== null ? ' AND pr.employee_id = ?' : '';
+        $sql = 'SELECT
+                    pr.id,
+                    pr.tenant_id,
+                    pr.employee_id,
+                    pr.original_file_name,
+                    pr.stored_file_path,
+                    pr.mime_type,
+                    pr.file_size,
+                    pr.sent_on,
+                    pr.sent_at,
+                    u.email AS employee_email,
+                    u.first_name AS employee_first_name,
+                    u.last_name AS employee_last_name,
+                    u.status AS employee_status
+                FROM payroll_records pr
+                LEFT JOIN users u ON pr.employee_id = u.id
+                WHERE pr.tenant_id = ? AND pr.archived_at IS NULL' . $whereEmployee . '
+                ORDER BY pr.sent_at DESC
+                LIMIT ? OFFSET ?';
+        $stmt = $this->pdo->prepare($sql);
+        $index = 1;
+        $stmt->bindValue($index++, $tenantId, PDO::PARAM_INT);
+        if ($employeeId !== null) {
+            $stmt->bindValue($index++, $employeeId, PDO::PARAM_INT);
+        }
+        $stmt->bindValue($index++, $limit, PDO::PARAM_INT);
+        $stmt->bindValue($index++, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $fileSize = null;
+            if ($row['file_size'] !== null && $row['file_size'] !== '') {
+                $fileSize = (int)$row['file_size'];
+            }
+            $result[] = [
+                'id' => (int)$row['id'],
+                'tenant_id' => (int)$row['tenant_id'],
+                'employee_id' => (int)$row['employee_id'],
+                'employee_email' => $row['employee_email'] !== null ? (string)$row['employee_email'] : null,
+                'employee_first_name' => $row['employee_first_name'] !== null ? (string)$row['employee_first_name'] : null,
+                'employee_last_name' => $row['employee_last_name'] !== null ? (string)$row['employee_last_name'] : null,
+                'employee_status' => $row['employee_status'] !== null ? (string)$row['employee_status'] : null,
+                'original_file_name' => (string)$row['original_file_name'],
+                'stored_file_path' => (string)$row['stored_file_path'],
+                'mime_type' => $row['mime_type'] !== null ? (string)$row['mime_type'] : null,
+                'file_size' => $fileSize,
+                'sent_on' => AppTime::fromStorage((string)$row['sent_on']) ?? AppTime::now(),
+                'sent_at' => AppTime::fromStorage((string)$row['sent_at']) ?? AppTime::now(),
+            ];
+        }
+        return $result;
+    }
+
     /**
      * @return array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable}|null
      */
@@ -2797,6 +3042,35 @@ final class Repository
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * @param array<string,mixed> $row
+     * @return array{
+     *   id:int,
+     *   user_id:int,
+     *   name:?string,
+     *   credential_id:string,
+     *   user_handle:string,
+     *   transports:?array,
+     *   sign_count:int,
+     *   last_used_at:?DateTimeImmutable,
+     *   created_at:DateTimeImmutable
+     * }
+     */
+    private function mapPasskeyRow(array $row): array
+    {
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'name' => $row['name'] !== null ? (string)$row['name'] : null,
+            'credential_id' => (string)$row['credential_id'],
+            'user_handle' => $row['user_handle'] !== null ? (string)$row['user_handle'] : '',
+            'transports' => $this->decodeJsonConfig($row['transports_json'] ?? null),
+            'sign_count' => (int)($row['sign_count'] ?? 0),
+            'last_used_at' => AppTime::fromStorage($row['last_used_at']),
+            'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+        ];
     }
 
     /**

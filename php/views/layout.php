@@ -49,6 +49,7 @@
         <?php elseif ($isTenantAdmin): ?>
           <a href="/admin/role-codes" class="nav-link">ロールコード管理</a>
           <a href="/admin/timesheets/export" class="nav-link">勤怠エクスポート</a>
+          <a href="/admin/payslips" class="nav-link">給与明細管理</a>
           <a href="/admin/payslips/send" class="nav-link">給与明細送信</a>
         <?php else: ?>
           <a href="/payrolls" class="nav-link">給与明細</a>

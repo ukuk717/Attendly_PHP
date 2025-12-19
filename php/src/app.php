@@ -15,6 +15,7 @@ use Attendly\Security\HostValidationMiddleware;
 use Attendly\Security\SecurityHeadersMiddleware;
 use Attendly\Controllers\AuthController;
 use Attendly\Controllers\MfaLoginController;
+use Attendly\Controllers\PasskeyController;
 use Attendly\Security\RequireAdminMiddleware;
 use Attendly\Security\RequireAuthMiddleware;
 use Attendly\Middleware\CurrentUserMiddleware;
@@ -26,6 +27,7 @@ use Attendly\Controllers\RegisterVerifyController;
 use Attendly\Controllers\RoleCodeController;
 use Attendly\Controllers\TimesheetExportController;
 use Attendly\Controllers\PayslipController;
+use Attendly\Controllers\AdminPayslipsController;
 use Attendly\Controllers\DashboardController;
 use Attendly\Controllers\PayrollViewerController;
 use Attendly\Controllers\WorkSessionController;
@@ -138,6 +140,14 @@ function create_app(): \Slim\App
     $app->post('/login', [$authController, 'login']);
     $app->post('/logout', [$authController, 'logout']);
 
+    // Passkeys (WebAuthn)
+    $passkeyController = new PasskeyController();
+    $app->post('/passkeys/login/options', [$passkeyController, 'loginOptions']);
+    $app->post('/passkeys/login/verify', [$passkeyController, 'loginVerify']);
+    $app->post('/passkeys/registration/options', [$passkeyController, 'registrationOptions'])->add(new RequireAuthMiddleware());
+    $app->post('/passkeys/registration/verify', [$passkeyController, 'registrationVerify'])->add(new RequireAuthMiddleware());
+    $app->post('/passkeys/{id}/delete', [$passkeyController, 'delete'])->add(new RequireAuthMiddleware());
+
     // MFA (メールOTP)
     $mfaLoginController = new MfaLoginController($view);
     $app->get('/login/mfa', [$mfaLoginController, 'show']);
@@ -190,6 +200,12 @@ function create_app(): \Slim\App
     $app->post('/payslips/send', [$payslipController, 'send'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->get('/admin/payslips/send', [$payslipController, 'showForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/payslips/send', [$payslipController, 'sendFromForm'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+
+    // Payslip management (admin)
+    $adminPayslips = new AdminPayslipsController($view);
+    $app->get('/admin/payslips', [$adminPayslips, 'show'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/admin/payslips/{id}/download', [$adminPayslips, 'download'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/admin/payslips/{id}/resend', [$adminPayslips, 'resend'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
     // Admin employee management / sessions / tenant settings
     $adminEmployees = new AdminEmployeesController();

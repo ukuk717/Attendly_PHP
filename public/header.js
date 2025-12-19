@@ -128,26 +128,32 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!text) {
         return;
       }
-      const original = button.textContent;
-      try {
-        await navigator.clipboard.writeText(text);
-      try {
-        await navigator.clipboard.writeText(text);
-        button.textContent = 'コピーしました';
-        button.setAttribute('aria-label', 'コピーしました');
-        button.disabled = true;
+
+      const showToast = (message, variant = 'success') => {
+        let container = document.querySelector('.toast-container');
+        if (!container) {
+          container = document.createElement('div');
+          container.className = 'toast-container';
+          document.body.appendChild(container);
+        }
+        const toast = document.createElement('div');
+        toast.className = `toast toast--${variant}`;
+        toast.textContent = message;
+        toast.setAttribute('role', 'status');
+        toast.setAttribute('aria-live', 'polite');
+        container.appendChild(toast);
+
         window.setTimeout(() => {
-          button.textContent = original;
-          button.removeAttribute('aria-label');
-          button.disabled = false;
-        }, 1200);
-      } catch (err) {
-        // fallback error handling
-      }        window.setTimeout(() => {
-          button.textContent = original;
-          button.disabled = false;
-        }, 1200);
+          toast.classList.add('toast--hide');
+          window.setTimeout(() => toast.remove(), 250);
+        }, 1400);
+      };
+
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('コピーしました。', 'success');
       } catch (error) {
+        showToast('コピーに失敗しました。', 'error');
         window.prompt('コピーしてください:', text);
       }
     });

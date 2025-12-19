@@ -14,7 +14,7 @@
         <option value="part_time">アルバイト/パート</option>
         <option value="full_time">社員</option>
       </select>
-      <p class="form-note">従業員登録時に自動で雇用区分が付与されます（後から変更も可能）。</p>
+      <p class="form-note">雇用区分を指定すると、従業員登録時に自動で雇用区分が付与されます（後から変更も可能）。</p>
     </div>
     <div class="form-field">
       <label for="max_uses">利用上限（任意）</label>
@@ -31,19 +31,19 @@
 <section class="card">
   <h3>発行済みコード</h3>
   <div class="table-responsive">
-    <table class="table">
+    <table class="table role-codes-table">
       <thead>
         <tr>
-          <th>ID</th>
-          <th>雇用区分</th>
-          <th>コード</th>
+          <th class="table-text-nowrap">ID</th>
+          <th class="table-text-nowrap">雇用区分</th>
+          <th class="table-text-nowrap">コード</th>
           <th>共有リンク</th>
-          <th>QR</th>
-          <th>使用数</th>
-          <th>上限</th>
-          <th>有効期限</th>
-          <th>状態</th>
-          <th>操作</th>
+          <th class="table-text-nowrap">QR</th>
+          <th class="table-text-nowrap">使用数</th>
+          <th class="table-text-nowrap">上限</th>
+          <th class="table-text-nowrap">有効期限</th>
+          <th class="table-text-nowrap">状態</th>
+          <th class="table-text-nowrap">操作</th>
         </tr>
       </thead>
       <tbody>
@@ -63,23 +63,22 @@
               $shareUrl = $base !== '' ? ($base . '/register?roleCode=' . rawurlencode((string)$item['code'])) : ('/register?roleCode=' . rawurlencode((string)$item['code']));
             ?>
             <tr>
-              <td><?= $e((string)$item['id']) ?></td>
-              <td><?= $e($employmentLabel) ?></td>
-              <td class="mono"><?= $e($item['code']) ?></td>
+              <td class="table-text-nowrap"><?= $e((string)$item['id']) ?></td>
+              <td class="table-text-nowrap"><?= $e($employmentLabel) ?></td>
+              <td class="table-text-nowrap"><code><?= $e($item['code']) ?></code></td>
               <td>
-                <div class="form-inline" style="gap:6px; flex-wrap:wrap;">
-                  <input type="text" value="<?= $e($shareUrl) ?>" readonly style="min-width:260px;">
+                <div class="share-actions">
                   <button type="button" class="btn" data-copy-text="<?= $e($shareUrl) ?>">コピー</button>
-                  <a class="btn secondary" href="<?= $e($shareUrl) ?>" target="_blank" rel="noopener">開く</a>
+                  <a class="btn secondary" href="<?= $e($shareUrl) ?>" target="_blank" rel="noopener noreferrer">開く</a>
                 </div>
               </td>
               <td>
                 <a class="btn" href="/admin/role-codes/<?= $e((string)$item['id']) ?>/qr">ダウンロード</a>
               </td>
-              <td><?= $e((string)$item['usage_count']) ?></td>
-              <td><?= $e($item['max_uses'] === null ? '—' : (string)$item['max_uses']) ?></td>
-              <td><?= $item['expires_at'] ? $e($item['expires_at']->format('Y-m-d')) : $e('—') ?></td>
-              <td><?= $e($item['is_disabled'] ? '無効' : '有効') ?></td>
+              <td class="table-text-nowrap"><?= $e((string)$item['usage_count']) ?></td>
+              <td class="table-text-nowrap"><?= $e($item['max_uses'] === null ? '—' : (string)$item['max_uses']) ?></td>
+              <td class="table-text-nowrap"><?= $item['expires_at'] ? $e($item['expires_at']->format('Y-m-d')) : $e('—') ?></td>
+              <td class="table-text-nowrap"><?= $e($item['is_disabled'] ? '無効' : '有効') ?></td>
               <td>
                 <?php if (!$item['is_disabled']): ?>
                   <form method="post" action="/admin/role-codes/<?= $e((string)$item['id']) ?>/disable" class="inline-form" data-confirm-message="無効化しますか？">

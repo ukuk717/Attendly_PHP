@@ -15,6 +15,10 @@ class ComposerStaticInitfae5f5deff3007f21131e471bc04b1cc
     );
 
     public static $prefixLengthsPsr4 = array (
+        'l' =>
+        array (
+            'lbuchs\\WebAuthn\\' => 16,
+        ),
         'c' =>
         array (
             'chillerlan\\Settings\\' => 20,
@@ -61,6 +65,10 @@ class ComposerStaticInitfae5f5deff3007f21131e471bc04b1cc
     );
 
     public static $prefixDirsPsr4 = array (
+        'lbuchs\\WebAuthn\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/lbuchs/webauthn/src',
+        ),
         'chillerlan\\Settings\\' =>
         array (
             0 => __DIR__ . '/..' . '/chillerlan/php-settings-container/src',

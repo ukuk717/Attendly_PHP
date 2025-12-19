@@ -20,7 +20,8 @@
   - 重要: `user_active_sessions`（同時ログイン制御）、`tenant_admin_mfa_reset_logs`（監査ログ）が含まれる。
 
 ### 3) 起動
-- `php/` で `php -S localhost:8000 -t public`（`php/public/index.php` 起点）
+- `php/` で `php -S 127.0.0.1:8000 -t public public/router.php`（ルーティング用。`/login` などのパスも動作）
+  - Windows 環境で `http://localhost:8000` が別プロセス（IPv6 `::1`）に割り当てられている場合があるため、ブラウザも `http://127.0.0.1:8000` で開いてください。
 - `http://localhost:8000/health` が `ok` を返すこと
 
 ### 4) 認証・アカウント系

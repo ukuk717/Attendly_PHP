@@ -39,7 +39,7 @@ final class AccountController
         }
         $rawMax = $_ENV['MAX_PASSWORD_LENGTH'] ?? 256;
         $this->maxPasswordLength = filter_var($rawMax, FILTER_VALIDATE_INT, ['options' => ['min_range' => 32]]) ?: 256;
-        if (this->maxPasswordLengh <= $this->minPasswordLength) {
+        if ($this->maxPasswordLength <= $this->minPasswordLength) {
             $this->maxPasswordLength = max(256, $this->minPasswordLength + 1);
         }
         $this->passwordPolicy = new PasswordPolicy($this->minPasswordLength, $this->maxPasswordLength);
@@ -78,6 +78,24 @@ final class AccountController
             }
         }
         $emailState = $this->buildEmailState($pendingChallenge, $pendingEmail);
+        $passkeys = [];
+        try {
+            foreach ($this->repository->listPasskeysByUser($user['id']) as $passkey) {
+                $createdAt = $passkey['created_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i');
+                $lastUsed = $passkey['last_used_at'] instanceof \DateTimeImmutable
+                    ? $passkey['last_used_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
+                    : null;
+                $passkeys[] = [
+                    'id' => $passkey['id'],
+                    'name' => $passkey['name'],
+                    'created_at' => $createdAt,
+                    'last_used_at' => $lastUsed,
+                    'transports' => $passkey['transports'],
+                ];
+            }
+        } catch (\Throwable) {
+            Flash::add('error', 'パスキー情報を取得できませんでした。');
+        }
 
         $html = $this->view->renderWithLayout('account_settings', [
             'title' => 'アカウント設定',
@@ -91,6 +109,7 @@ final class AccountController
             'pendingEmail' => $emailState['email'],
             'pendingEmailExpiresAt' => $emailState['expiresAtDisplay'],
             'pendingEmailLocked' => $emailState['isLocked'],
+            'passkeys' => $passkeys,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');

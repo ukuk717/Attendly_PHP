@@ -14,6 +14,8 @@ final class SessionAuth
     private const RECOVERY_CODES_KEY = '_mfa_recovery_codes';
     private const PENDING_EMAIL_CHANGE_KEY = '_pending_email_change';
     private const AUTH_TIME_KEY = '_auth_time';
+    private const PENDING_PASSKEY_REG_KEY = '_pending_passkey_reg';
+    private const PENDING_PASSKEY_LOGIN_KEY = '_pending_passkey_login';
 
     /**
      * @param array{id:int|null,email:string|null,role?:string|null,tenant_id?:int|null} $user
@@ -74,6 +76,8 @@ final class SessionAuth
         unset($_SESSION[self::RECOVERY_CODES_KEY]);
         unset($_SESSION[self::PENDING_EMAIL_CHANGE_KEY]);
         unset($_SESSION[self::AUTH_TIME_KEY]);
+        unset($_SESSION[self::PENDING_PASSKEY_REG_KEY]);
+        unset($_SESSION[self::PENDING_PASSKEY_LOGIN_KEY]);
     }
 
     /**
@@ -280,6 +284,119 @@ final class SessionAuth
     public static function clearPendingEmailChange(): void
     {
         unset($_SESSION[self::PENDING_EMAIL_CHANGE_KEY]);
+    }
+
+    public static function setPendingPasskeyRegistration(int $userId, string $challenge): void
+    {
+        $challenge = trim($challenge);
+        if ($userId <= 0 || $challenge === '') {
+            return;
+        }
+        $_SESSION[self::PENDING_PASSKEY_REG_KEY] = [
+            'user_id' => $userId,
+            'challenge' => $challenge,
+            'created_at' => time(),
+        ];
+    }
+
+    /**
+     * @return array{user_id:int,challenge:string,created_at:int}|null
+     */
+    public static function getPendingPasskeyRegistration(): ?array
+    {
+        $pending = $_SESSION[self::PENDING_PASSKEY_REG_KEY] ?? null;
+        if (!is_array($pending) || empty($pending['user_id']) || empty($pending['challenge'])) {
+            return null;
+        }
+        $createdAt = isset($pending['created_at']) ? (int)$pending['created_at'] : 0;
+        $ttl = self::getPasskeyChallengeTtl();
+        if ($ttl > 0 && $createdAt > 0 && (time() - $createdAt) > $ttl) {
+            self::clearPendingPasskeyRegistration();
+            return null;
+        }
+        return [
+            'user_id' => (int)$pending['user_id'],
+            'challenge' => (string)$pending['challenge'],
+            'created_at' => $createdAt,
+        ];
+    }
+
+    public static function clearPendingPasskeyRegistration(): void
+    {
+        unset($_SESSION[self::PENDING_PASSKEY_REG_KEY]);
+    }
+
+    /**
+     * @param string[] $allowIds
+     */
+    public static function setPendingPasskeyLogin(string $challenge, array $allowIds = []): void
+    {
+        $challenge = trim($challenge);
+        if ($challenge === '') {
+            return;
+        }
+        $normalized = [];
+        foreach ($allowIds as $id) {
+            if (is_string($id)) {
+                $id = trim($id);
+                if ($id !== '') {
+                    $normalized[] = $id;
+                }
+            }
+        }
+        $_SESSION[self::PENDING_PASSKEY_LOGIN_KEY] = [
+            'challenge' => $challenge,
+            'allow_ids' => $normalized,
+            'created_at' => time(),
+        ];
+    }
+
+    /**
+     * @return array{challenge:string,allow_ids:array<int,string>,created_at:int}|null
+     */
+    public static function getPendingPasskeyLogin(): ?array
+    {
+        $pending = $_SESSION[self::PENDING_PASSKEY_LOGIN_KEY] ?? null;
+        if (!is_array($pending) || empty($pending['challenge'])) {
+            return null;
+        }
+        $createdAt = isset($pending['created_at']) ? (int)$pending['created_at'] : 0;
+        $ttl = self::getPasskeyChallengeTtl();
+        if ($ttl > 0 && $createdAt > 0 && (time() - $createdAt) > $ttl) {
+            self::clearPendingPasskeyLogin();
+            return null;
+        }
+        $allowIds = [];
+        if (!empty($pending['allow_ids']) && is_array($pending['allow_ids'])) {
+            foreach ($pending['allow_ids'] as $id) {
+                if (is_string($id) && $id !== '') {
+                    $allowIds[] = $id;
+                }
+            }
+        }
+        return [
+            'challenge' => (string)$pending['challenge'],
+            'allow_ids' => $allowIds,
+            'created_at' => $createdAt,
+        ];
+    }
+
+    public static function clearPendingPasskeyLogin(): void
+    {
+        unset($_SESSION[self::PENDING_PASSKEY_LOGIN_KEY]);
+    }
+
+    private static function getPasskeyChallengeTtl(): int
+    {
+        $ttlRaw = $_ENV['PASSKEY_CHALLENGE_TTL'] ?? 300;
+        $ttl = filter_var($ttlRaw, FILTER_VALIDATE_INT, ['options' => ['default' => 300]]);
+        if ($ttl === false) {
+            return 300;
+        }
+        if ($ttl > 0) {
+            return max(60, min(900, (int)$ttl));
+        }
+        return 0;
     }
 
     /**

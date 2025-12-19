@@ -41,6 +41,47 @@
 </section>
 
 <section class="card">
+  <h3>パスキー</h3>
+  <p class="form-note">パスキーでログインすると多要素認証は不要になります。対応端末・ブラウザでご利用ください。</p>
+  <div class="form">
+    <label class="form-field" for="passkey-label">
+      <span>表示名（任意）</span>
+      <input type="text" id="passkey-label" maxlength="64" placeholder="例: 仕事用PC">
+    </label>
+    <input type="hidden" id="passkey-csrf" value="<?= $e($csrf) ?>">
+    <button type="button" class="btn secondary" data-passkey-register>パスキーを登録</button>
+    <p class="passkey-status" data-passkey-status></p>
+  </div>
+
+  <?php if (empty($passkeys ?? [])): ?>
+    <p class="form-note">登録済みのパスキーはありません。</p>
+  <?php else: ?>
+    <ul class="passkey-list">
+      <?php foreach ($passkeys as $passkey): ?>
+        <li class="passkey-item">
+          <div class="passkey-meta">
+            <div class="passkey-name"><?= $e($passkey['name'] ?? 'パスキー') ?></div>
+            <div class="passkey-sub">登録: <?= $e($passkey['created_at']) ?></div>
+            <?php if (!empty($passkey['last_used_at'])): ?>
+              <div class="passkey-sub">最終使用: <?= $e($passkey['last_used_at']) ?></div>
+            <?php else: ?>
+              <div class="passkey-sub">最終使用: 未使用</div>
+            <?php endif; ?>
+            <?php if (!empty($passkey['transports']) && is_array($passkey['transports'])): ?>
+              <div class="passkey-sub">方式: <?= $e(implode(', ', $passkey['transports'])) ?></div>
+            <?php endif; ?>
+          </div>
+          <form method="post" action="/passkeys/<?= $e((string)$passkey['id']) ?>/delete" class="form-inline">
+            <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+            <button type="submit" class="btn danger" onclick="return confirm('このパスキーを削除しますか？');">削除</button>
+          </form>
+        </li>
+      <?php endforeach; ?>
+    </ul>
+  <?php endif; ?>
+</section>
+
+<section class="card">
   <h3>メールアドレス変更</h3>
   <p class="form-note">新しいメールアドレスに確認コードを送信し、コードを入力すると変更が完了します。</p>
   <form method="post" action="/account/email/request" class="form">
@@ -73,3 +114,5 @@
   <?php endif; ?>
   <?php endif; ?>
 </section>
+
+<script src="/passkeys.js" defer></script>

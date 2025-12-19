@@ -295,9 +295,11 @@ final class TimesheetExportController
         if ($size !== false) {
             $response = $response->withHeader('Content-Length', (string)$size);
         }
+
+        $validatedContentType = $this->validateContentType($contentType);
         return $response
-            $validatedContentType = $this->validateContentType($contentType);
             ->withHeader('Content-Type', $validatedContentType)
+            ->withHeader('Content-Disposition', $disposition);
     }
 
     private function deliverExportForDashboard(ResponseInterface $response, string $path, string $filename, string $contentType): ResponseInterface
@@ -331,9 +333,30 @@ final class TimesheetExportController
         if ($size !== false) {
             $response = $response->withHeader('Content-Length', (string)$size);
         }
+        $validatedContentType = $this->validateContentType($contentType);
         return $response
-            ->withHeader('Content-Type', $contentType)
+            ->withHeader('Content-Type', $validatedContentType)
             ->withHeader('Content-Disposition', $disposition);
+    }
+
+    private function validateContentType(string $contentType): string
+    {
+        $normalized = strtolower(trim($contentType));
+        if ($normalized === '') {
+            return 'application/octet-stream';
+        }
+
+        $allowed = [
+            'application/pdf',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'text/csv; charset=utf-8',
+            'text/csv',
+            'application/octet-stream',
+        ];
+        if (in_array($normalized, $allowed, true)) {
+            return $normalized;
+        }
+        return 'application/octet-stream';
     }
 
     private function flashError(string $message, ResponseInterface $response): ResponseInterface

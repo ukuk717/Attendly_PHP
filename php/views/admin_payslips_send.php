@@ -4,7 +4,7 @@
 </div>
 
 <section class="card">
-  <form method="post" action="/admin/payslips/send" class="form">
+  <form method="post" action="/admin/payslips/send" class="form" enctype="multipart/form-data">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
     <div class="form-field">
       <label for="employee_id">従業員</label>
@@ -37,6 +37,14 @@
     <div class="form-field">
       <label for="summary">概要</label>
       <textarea name="summary" id="summary" rows="4" required maxlength="500"></textarea>
+    </div>
+    <div class="form-field">
+      <label for="payslip_file">給与明細ファイル（任意・PDF）</label>
+      <input type="file" name="payslip_file" id="payslip_file" accept="application/pdf,.pdf">
+      <p class="form-note">
+        PDFを添付すると、従業員がポータルの「給与明細」画面からダウンロードできます（メールへの添付は行いません）。
+        最大 <?= $e((string)($maxUploadMb ?? 10)) ?>MB。
+      </p>
     </div>
     <button type="submit" class="btn primary">送信する</button>
   </form>

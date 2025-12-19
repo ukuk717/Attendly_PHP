@@ -12,6 +12,7 @@ use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\UploadedFileInterface;
 
 final class PayslipController
 {
@@ -73,12 +74,17 @@ final class PayslipController
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
         $employees = $this->repository->listEmployeesForTenant($admin['tenant_id'], 200);
+        $maxUploadMb = filter_var($_ENV['PAYSLIP_UPLOAD_MAX_MB'] ?? 10, FILTER_VALIDATE_INT, ['options' => ['default' => 10, 'min_range' => 1, 'max_range' => 50]]);
+        if ($maxUploadMb === false) {
+            $maxUploadMb = 10;
+        }
         $html = $this->view->renderWithLayout('admin_payslips_send', [
             'title' => '給与明細送信',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
             'employees' => $employees,
+            'maxUploadMb' => (int)$maxUploadMb,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -118,6 +124,11 @@ final class PayslipController
             return $response->withStatus(303)->withHeader('Location', '/admin/payslips/send');
         }
 
+        $uploadedFile = $this->getOptionalUploadedPayslip($request);
+        if ($uploadedFile !== null && $uploadedFile->getError() !== UPLOAD_ERR_OK) {
+            Flash::add('error', '給与明細ファイルのアップロードに失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/admin/payslips/send');
+        }
         try {
             $this->service->send([
                 'tenant_id' => $admin['tenant_id'],
@@ -126,9 +137,11 @@ final class PayslipController
                 'sent_on' => $sentOn,
                 'summary' => $summary,
                 'net_amount' => $netAmount,
-            ]);
+            ], $uploadedFile);
             Flash::add('success', '給与明細を送信しました。');
-        } catch (\Throwable $e) {
+        } catch (\RuntimeException $e) {
+            Flash::add('error', $e->getMessage());
+        } catch (\Throwable) {
             Flash::add('error', '送信に失敗しました。');
         }
         return $response->withStatus(303)->withHeader('Location', '/admin/payslips/send');
@@ -169,5 +182,21 @@ final class PayslipController
         $body = (array)$request->getParsedBody();
         $token = (string)($body['csrf_token'] ?? '');
         return $token !== '' && hash_equals(CsrfToken::getToken(), $token);
+    }
+
+    private function getOptionalUploadedPayslip(ServerRequestInterface $request): ?UploadedFileInterface
+    {
+        $files = $request->getUploadedFiles();
+        if (!is_array($files) || !isset($files['payslip_file'])) {
+            return null;
+        }
+        $file = $files['payslip_file'];
+        if (!$file instanceof UploadedFileInterface) {
+            return null;
+        }
+        if ($file->getError() === UPLOAD_ERR_NO_FILE) {
+            return null;
+        }
+        return $file;
     }
 }

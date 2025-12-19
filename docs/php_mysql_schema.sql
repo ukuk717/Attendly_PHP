@@ -173,6 +173,25 @@ CREATE TABLE user_mfa_trusted_devices (
   CONSTRAINT user_mfa_trusted_devices_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE user_passkeys (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED NOT NULL,
+  name VARCHAR(128),
+  credential_id VARCHAR(512) NOT NULL,
+  public_key TEXT NOT NULL,
+  user_handle VARCHAR(255) NOT NULL,
+  transports_json TEXT,
+  sign_count INT UNSIGNED NOT NULL DEFAULT 0,
+  last_used_at DATETIME(3),
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY user_passkeys_credential_unique (credential_id),
+  KEY user_passkeys_user_idx (user_id),
+  KEY user_passkeys_user_created_idx (user_id, created_at),
+  CONSTRAINT user_passkeys_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE user_active_sessions (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id INT UNSIGNED NOT NULL,

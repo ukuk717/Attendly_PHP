@@ -11,6 +11,7 @@ use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\View;
 use chillerlan\QRCode\QRCode;
+use chillerlan\QRCode\Output\QRCodeOutputException;
 use chillerlan\QRCode\QROptions;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -208,22 +209,47 @@ final class RoleCodeController
         $baseUrl = $this->getBaseUrl($request);
         $registerUrl = rtrim($baseUrl, '/') . '/register?roleCode=' . rawurlencode((string)$roleCode['code']);
 
-        $options = new QROptions([
-            'outputType' => QRCode::OUTPUT_IMAGE_PNG,
-            'eccLevel' => QRCode::ECC_L,
-            'scale' => 6,
-            'imageTransparent' => false,
-        ]);
-        $png = (new QRCode($options))->render($registerUrl);
-
         $code = (string)$roleCode['code'];
-        $downloadName = 'role_code_' . $code . '.png';
-        $downloadName = str_replace(['"', "\r", "\n"], '', $downloadName);
-        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
+        $safeBaseName = str_replace(['"', "\r", "\n"], '', 'role_code_' . $code);
 
-        $response->getBody()->write($png);
+        $payload = null;
+        $contentType = null;
+        $downloadName = null;
+
+        // GD 拡張がない環境でも動くよう、PNG(GD) → SVG へフォールバックする
+        if (extension_loaded('gd')) {
+            try {
+                $options = new QROptions([
+                    'outputType' => QRCode::OUTPUT_IMAGE_PNG,
+                    'outputBase64' => false,
+                    'eccLevel' => QRCode::ECC_L,
+                    'scale' => 6,
+                    'imageTransparent' => false,
+                ]);
+                $payload = (new QRCode($options))->render($registerUrl);
+                $contentType = 'image/png';
+                $downloadName = $safeBaseName . '.png';
+            } catch (QRCodeOutputException) {
+                $payload = null;
+            }
+        }
+
+        if ($payload === null) {
+            $options = new QROptions([
+                'outputType' => QRCode::OUTPUT_MARKUP_SVG,
+                'outputBase64' => false,
+                'eccLevel' => QRCode::ECC_L,
+                'scale' => 6,
+            ]);
+            $payload = (new QRCode($options))->render($registerUrl);
+            $contentType = 'image/svg+xml; charset=utf-8';
+            $downloadName = $safeBaseName . '.svg';
+        }
+
+        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
+        $response->getBody()->write($payload);
         return $response
-            ->withHeader('Content-Type', 'image/png')
+            ->withHeader('Content-Type', $contentType)
             ->withHeader('Content-Disposition', $disposition);
     }
 

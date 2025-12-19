@@ -349,6 +349,10 @@ body.menu-open {
   min-width: 220px;
 }
 
+.role-codes-table {
+  min-width: 980px;
+}
+
 .highlight {
   font-size: 2rem;
   font-weight: 700;
@@ -479,6 +483,50 @@ body.menu-open {
   color: var(--danger);
 }
 
+.toast-container {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: none;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.toast--success {
+  background: #e5f6ef;
+  border-color: #bfe7d3;
+  color: var(--success);
+}
+
+.toast--error {
+  background: #fde8e2;
+  border-color: #f6c3b6;
+  color: var(--danger);
+}
+
+.toast--hide {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
 .btn.danger {
   background: #fde8e2;
   color: var(--danger);
@@ -519,6 +567,64 @@ body.menu-open {
 
 .form-links .link:hover {
   text-decoration: underline;
+}
+
+.passkey-login {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.passkey-status {
+  min-height: 1.1rem;
+  font-size: 0.9rem;
+  color: #555555;
+}
+
+.passkey-status.success {
+  color: var(--success);
+}
+
+.passkey-status.error {
+  color: var(--danger);
+}
+
+.passkey-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.passkey-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: #fafafa;
+}
+
+.passkey-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.passkey-name {
+  font-weight: 600;
+}
+
+.passkey-sub {
+  font-size: 0.85rem;
+  color: #666666;
 }
 
 .form-field-inline {
@@ -953,5 +1059,10 @@ body.menu-open {
 
   .mfa-login-forms {
     flex-direction: column;
+  }
+
+  .passkey-item {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

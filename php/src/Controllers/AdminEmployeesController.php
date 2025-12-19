@@ -145,7 +145,13 @@ final class AdminEmployeesController
             $employmentType = null;
         }
 
-        $allowedTypes = ['full-time', 'part-time', 'contractor', 'temporary', null];
+        if ($employmentType !== null) {
+            $employmentType = strtolower($employmentType);
+            $employmentType = str_replace('-', '_', $employmentType);
+        }
+
+        // UI/ロールコードと同じ表現（part_time/full_time）に統一する
+        $allowedTypes = [null, 'part_time', 'full_time'];
         if (!in_array($employmentType, $allowedTypes, true)) {
             Flash::add('error', '無効な雇用区分です。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');

@@ -31,8 +31,16 @@
         <a class="btn secondary" href="/password/reset">パスワードをお忘れの方</a>
       </div>
     </form>
+    <div class="passkey-login">
+      <p class="form-note">パスキー対応端末では、パスワードなしでログインできます。</p>
+      <input type="hidden" id="passkey-csrf" value="<?= $e($csrf ?? '') ?>">
+      <button type="button" class="btn secondary" data-passkey-login>パスキーでログイン</button>
+      <p class="passkey-status" data-passkey-status></p>
+    </div>
     <div class="form-links">
       <a class="link" href="/register">従業員登録へ</a>
     </div>
   </section>
 </div>
+
+<script src="/passkeys.js" defer></script>
