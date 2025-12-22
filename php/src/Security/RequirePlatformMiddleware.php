@@ -12,15 +12,16 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Psr7\Response;
 
 /**
- * プラットフォーム管理者（role=admin かつ tenant_id が未設定）を許可するミドルウェア。
+ * プラットフォーム管理者（role=platform_admin かつ tenant_id が未設定）を許可するミドルウェア。
  */
 final class RequirePlatformMiddleware implements MiddlewareInterface
 {
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
         $user = $request->getAttribute('currentUser');
+        $role = is_array($user) ? ($user['role'] ?? null) : null;
         $isPlatform = is_array($user)
-            && ($user['role'] ?? null) === 'admin'
+            && in_array($role, ['platform_admin', 'admin'], true)
             && !empty($user['id'])
             && (!array_key_exists('tenant_id', $user) || $user['tenant_id'] === null);
 
@@ -58,4 +59,3 @@ final class RequirePlatformMiddleware implements MiddlewareInterface
         return $response->withHeader('Location', '/login');
     }
 }
-

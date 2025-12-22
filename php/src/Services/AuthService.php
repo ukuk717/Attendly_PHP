@@ -33,7 +33,7 @@ final class AuthService
             return ['user' => null, 'error' => 'not_found'];
         }
 
-        if (!isset($user['role']) || !isset($user['tenant_id'])) {
+        if (!array_key_exists('role', $user) || !array_key_exists('tenant_id', $user)) {
             return ['user' => null, 'error' => 'incomplete_user_data'];
         }
 

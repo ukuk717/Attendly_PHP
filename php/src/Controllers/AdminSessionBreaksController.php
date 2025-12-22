@@ -7,6 +7,7 @@ namespace Attendly\Controllers;
 use Attendly\Database\Repository;
 use Attendly\Security\CsrfToken;
 use Attendly\Support\AppTime;
+use Attendly\Support\BreakFeature;
 use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
@@ -38,6 +39,10 @@ final class AdminSessionBreaksController
         if ($employeeId <= 0 || $sessionId <= 0) {
             Flash::add('error', '対象が見つかりません。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        if (!BreakFeature::isEnabled()) {
+            Flash::add('info', '休憩機能は現在無効です。');
+            return $this->redirectToSessions($response, $request, $employeeId);
         }
 
         $employee = $this->findEmployeeForAdmin($admin['tenant_id'], $employeeId);
@@ -116,6 +121,10 @@ final class AdminSessionBreaksController
         if ($employee === null || ($employee['status'] ?? '') !== 'active') {
             Flash::add('error', '対象の従業員が見つかりません。');
             return $response->withStatus(303)->withHeader('Location', $redirect);
+        }
+        if (!BreakFeature::isEnabled()) {
+            Flash::add('info', '休憩機能は現在無効です。');
+            return $this->redirectToSessions($response, $request, $employeeId);
         }
         $session = $this->repository->findWorkSessionById($sessionId);
         if ($session === null || (int)$session['user_id'] !== $employeeId) {
@@ -214,6 +223,10 @@ final class AdminSessionBreaksController
         if ($employee === null || ($employee['status'] ?? '') !== 'active') {
             Flash::add('error', '対象の従業員が見つかりません。');
             return $response->withStatus(303)->withHeader('Location', $redirect);
+        }
+        if (!BreakFeature::isEnabled()) {
+            Flash::add('info', '休憩機能は現在無効です。');
+            return $this->redirectToSessions($response, $request, $employeeId);
         }
         $session = $this->repository->findWorkSessionById($sessionId);
         if ($session === null || (int)$session['user_id'] !== $employeeId) {
@@ -317,6 +330,10 @@ final class AdminSessionBreaksController
             Flash::add('error', '対象の従業員が見つかりません。');
             return $response->withStatus(303)->withHeader('Location', $redirect);
         }
+        if (!BreakFeature::isEnabled()) {
+            Flash::add('info', '休憩機能は現在無効です。');
+            return $this->redirectToSessions($response, $request, $employeeId);
+        }
         $session = $this->repository->findWorkSessionById($sessionId);
         if ($session === null || (int)$session['user_id'] !== $employeeId) {
             Flash::add('error', '勤務記録が見つかりません。');
@@ -354,17 +371,25 @@ final class AdminSessionBreaksController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
+        if ($user === null) {
             throw new \RuntimeException('権限がありません。');
         }
-        if ($user['tenant_id'] === null) {
+        $tenantId = $user['tenant_id'] !== null ? (int)$user['tenant_id'] : null;
+        $role = $user['role'] ?? null;
+        if ($role === 'admin' && $tenantId !== null) {
+            $role = 'tenant_admin';
+        }
+        if ($role !== 'tenant_admin') {
+            throw new \RuntimeException('権限がありません。');
+        }
+        if ($tenantId === null) {
             throw new \RuntimeException('テナントに所属していません。');
         }
         return [
             'id' => $user['id'],
-            'tenant_id' => (int)$user['tenant_id'],
+            'tenant_id' => $tenantId,
             'email' => $user['email'],
-            'role' => $user['role'],
+            'role' => $role,
         ];
     }
 
@@ -474,5 +499,12 @@ final class AdminSessionBreaksController
             }
         }
         return false;
+    }
+
+    private function redirectToSessions(ResponseInterface $response, ServerRequestInterface $request, int $employeeId): ResponseInterface
+    {
+        [, , $queryString] = $this->normalizeYearMonth($request->getQueryParams());
+        $target = $employeeId > 0 ? "/admin/employees/{$employeeId}/sessions{$queryString}" : '/dashboard';
+        return $response->withStatus(303)->withHeader('Location', $target);
     }
 }

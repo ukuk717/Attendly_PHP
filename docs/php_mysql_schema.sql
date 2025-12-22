@@ -7,6 +7,7 @@ CREATE TABLE tenants (
   tenant_uid VARCHAR(64) NOT NULL,
   name VARCHAR(255),
   contact_email VARCHAR(255),
+  contact_phone VARCHAR(32),
   status VARCHAR(32) NOT NULL DEFAULT 'active',
   deactivated_at DATETIME(3),
   require_employee_email_verification TINYINT(1) NOT NULL DEFAULT 0,
@@ -119,12 +120,14 @@ CREATE TABLE payroll_records (
   file_size BIGINT UNSIGNED,
   sent_on DATE NOT NULL,
   sent_at DATETIME(3) NOT NULL,
+  downloaded_at DATETIME(3),
   archived_at DATETIME(3),
   created_at DATETIME(3) NOT NULL,
   PRIMARY KEY (id),
   KEY payroll_records_tenant_idx (tenant_id),
   KEY payroll_records_employee_idx (employee_id),
   KEY payroll_records_sent_on_idx (sent_on),
+  KEY payroll_records_downloaded_idx (downloaded_at),
   KEY payroll_records_archived_idx (archived_at),
   CONSTRAINT payroll_records_tenant_fk FOREIGN KEY (tenant_id) REFERENCES tenants (id) ON DELETE CASCADE,
   CONSTRAINT payroll_records_employee_fk FOREIGN KEY (employee_id) REFERENCES users (id) ON DELETE CASCADE,
@@ -206,6 +209,44 @@ CREATE TABLE user_active_sessions (
   UNIQUE KEY user_active_sessions_user_unique (user_id),
   KEY user_active_sessions_user_updated_idx (user_id, updated_at),
   CONSTRAINT user_active_sessions_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE user_login_sessions (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED NOT NULL,
+  session_hash VARCHAR(64) NOT NULL,
+  login_at DATETIME(3) NOT NULL,
+  login_ip VARCHAR(64),
+  user_agent VARCHAR(512),
+  revoked_at DATETIME(3),
+  last_seen_at DATETIME(3),
+  created_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY user_login_sessions_hash_unique (session_hash),
+  KEY user_login_sessions_user_login_idx (user_id, login_at),
+  KEY user_login_sessions_user_revoked_idx (user_id, revoked_at),
+  CONSTRAINT user_login_sessions_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE signed_downloads (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  token_hash VARCHAR(64) NOT NULL,
+  target_type VARCHAR(32) NOT NULL,
+  source_id INT UNSIGNED,
+  file_path VARCHAR(255) NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  content_type VARCHAR(255),
+  created_by INT UNSIGNED,
+  expires_at DATETIME(3) NOT NULL,
+  last_accessed_at DATETIME(3),
+  revoked_at DATETIME(3),
+  created_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY signed_downloads_token_unique (token_hash),
+  KEY signed_downloads_type_expires_idx (target_type, expires_at),
+  KEY signed_downloads_expires_idx (expires_at),
+  KEY signed_downloads_source_idx (target_type, source_id),
+  CONSTRAINT signed_downloads_created_by_fk FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tenant_admin_mfa_reset_logs (

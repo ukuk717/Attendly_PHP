@@ -7,22 +7,24 @@ namespace Attendly\Controllers;
 use Attendly\Database\Repository;
 use Attendly\Security\CsrfToken;
 use Attendly\Services\TimesheetExportService;
+use Attendly\Services\SignedDownloadService;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Slim\Psr7\Stream;
 
 final class TimesheetExportController
 {
     public function __construct(
         private ?View $view = null,
         private ?Repository $repository = null,
-        private ?TimesheetExportService $service = null
+        private ?TimesheetExportService $service = null,
+        private ?SignedDownloadService $signedDownloads = null
     ) {
         $this->repository = $this->repository ?? new Repository();
         $this->service = $this->service ?? new TimesheetExportService($this->repository);
+        $this->signedDownloads = $this->signedDownloads ?? new SignedDownloadService($this->repository);
         $this->view = $this->view ?? new View(dirname(__DIR__, 2) . '/views');
     }
 
@@ -39,7 +41,17 @@ final class TimesheetExportController
             return $export;
         }
 
-        return $this->deliverExport($response, $export['path'], $export['filename'], $export['content_type'], false);
+        $signed = $this->issueSignedDownload($export, $user['id'] ?? null);
+        if ($signed === null) {
+            return $this->error($response, 500, 'signed_url_failed');
+        }
+        $payload = [
+            'ok' => true,
+            'url' => $signed['url'],
+            'expires_at' => $signed['expires_at']->format(DATE_ATOM),
+        ];
+        $response->getBody()->write(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
     }
 
     public function showForm(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -80,7 +92,12 @@ final class TimesheetExportController
             return $export;
         }
 
-        return $this->deliverExport($response, $export['path'], $export['filename'], $export['content_type'], true);
+        $signed = $this->issueSignedDownload($export, $user['id'] ?? null);
+        if ($signed === null) {
+            Flash::add('error', '署名URLの発行に失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/admin/timesheets/export');
+        }
+        return $response->withStatus(303)->withHeader('Location', $signed['url']);
     }
 
     public function exportMonthlyFromDashboard(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -157,7 +174,12 @@ final class TimesheetExportController
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
 
-        return $this->deliverExportForDashboard($response, $result['path'], $result['filename'], $result['content_type']);
+        $signed = $this->issueSignedDownload($result, $admin['id'] ?? null);
+        if ($signed === null) {
+            Flash::add('error', '署名URLの発行に失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
+        }
+        return $response->withStatus(303)->withHeader('Location', $signed['url']);
     }
 
     /**
@@ -170,17 +192,25 @@ final class TimesheetExportController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
+        if ($user === null) {
             throw new \RuntimeException('権限がありません。');
         }
-        if ($user['tenant_id'] === null) {
+        $tenantId = $user['tenant_id'] !== null ? (int)$user['tenant_id'] : null;
+        $role = $user['role'] ?? null;
+        if ($role === 'admin' && $tenantId !== null) {
+            $role = 'tenant_admin';
+        }
+        if ($role !== 'tenant_admin') {
+            throw new \RuntimeException('権限がありません。');
+        }
+        if ($tenantId === null) {
             throw new \RuntimeException('テナントに所属していません。');
         }
         return [
             'id' => $user['id'],
-            'tenant_id' => (int)$user['tenant_id'],
+            'tenant_id' => $tenantId,
             'email' => $user['email'],
-            'role' => $user['role'],
+            'role' => $role,
         ];
     }
 
@@ -261,82 +291,18 @@ final class TimesheetExportController
         ];
     }
 
-    private function deliverExport(ResponseInterface $response, string $path, string $filename, string $contentType, bool $useFlash): ResponseInterface
+    private function issueSignedDownload(array $export, ?int $createdBy): ?array
     {
         $allowedDir = realpath(dirname(__DIR__, 2) . '/storage/exports');
-        $actualPath = realpath($path);
+        $actualPath = realpath((string)$export['path']);
         if ($allowedDir === false || $actualPath === false || !str_starts_with($actualPath, $allowedDir . DIRECTORY_SEPARATOR)) {
-            return $useFlash
-                ? $this->flashError('エクスポートファイルのパス検証に失敗しました。', $response)
-                : $this->error($response, 500, 'invalid_export_path');
+            return null;
         }
         if (!is_file($actualPath) || !is_readable($actualPath)) {
-            return $useFlash
-                ? $this->flashError('エクスポートファイルの読み込みに失敗しました。', $response)
-                : $this->error($response, 500, 'failed_to_read_export');
+            return null;
         }
-        $downloadName = basename($filename);
-        $downloadName = str_replace(['"', "\r", "\n"], '', $downloadName);
-        $handle = fopen($actualPath, 'rb');
-        if ($handle === false) {
-            return $useFlash
-                ? $this->flashError('エクスポートファイルの読み込みに失敗しました。', $response)
-                : $this->error($response, 500, 'failed_to_read_export');
-        }
-        try {
-            $size = filesize($actualPath);
-            $stream = new Stream($handle);
-            $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
-            $response = $response->withBody($stream);
-        } catch (\Throwable $e) {
-            fclose($handle);
-            throw $e;
-        }
-        if ($size !== false) {
-            $response = $response->withHeader('Content-Length', (string)$size);
-        }
-
-        $validatedContentType = $this->validateContentType($contentType);
-        return $response
-            ->withHeader('Content-Type', $validatedContentType)
-            ->withHeader('Content-Disposition', $disposition);
-    }
-
-    private function deliverExportForDashboard(ResponseInterface $response, string $path, string $filename, string $contentType): ResponseInterface
-    {
-        $allowedDir = realpath(dirname(__DIR__, 2) . '/storage/exports');
-        $actualPath = realpath($path);
-        if ($allowedDir === false || $actualPath === false || !str_starts_with($actualPath, $allowedDir . DIRECTORY_SEPARATOR)) {
-            Flash::add('error', 'エクスポートファイルのパス検証に失敗しました。');
-            return $response->withStatus(303)->withHeader('Location', '/dashboard');
-        }
-        if (!is_file($actualPath) || !is_readable($actualPath)) {
-            Flash::add('error', 'エクスポートファイルの読み込みに失敗しました。');
-            return $response->withStatus(303)->withHeader('Location', '/dashboard');
-        }
-        $downloadName = basename($filename);
-        $downloadName = str_replace(['"', "\r", "\n"], '', $downloadName);
-        $handle = fopen($actualPath, 'rb');
-        if ($handle === false) {
-            Flash::add('error', 'エクスポートファイルの読み込みに失敗しました。');
-            return $response->withStatus(303)->withHeader('Location', '/dashboard');
-        }
-        try {
-            $size = filesize($actualPath);
-            $stream = new Stream($handle);
-            $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $downloadName, rawurlencode($downloadName));
-            $response = $response->withBody($stream);
-        } catch (\Throwable $e) {
-            fclose($handle);
-            throw $e;
-        }
-        if ($size !== false) {
-            $response = $response->withHeader('Content-Length', (string)$size);
-        }
-        $validatedContentType = $this->validateContentType($contentType);
-        return $response
-            ->withHeader('Content-Type', $validatedContentType)
-            ->withHeader('Content-Disposition', $disposition);
+        $contentType = $this->validateContentType((string)($export['content_type'] ?? ''));
+        return $this->signedDownloads->issueForExport($actualPath, (string)$export['filename'], $contentType, $createdBy);
     }
 
     private function validateContentType(string $contentType): string

@@ -7,6 +7,7 @@ namespace Attendly\Controllers;
 use Attendly\Database\Repository;
 use Attendly\Security\CsrfToken;
 use Attendly\Support\AppTime;
+use Attendly\Support\BreakFeature;
 use Attendly\Support\Flash;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -30,6 +31,10 @@ final class WorkSessionBreakController
         if (!is_array($user) || empty($user['id'])) {
             Flash::add('error', 'ログインが必要です。');
             return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        if (!BreakFeature::isEnabled()) {
+            Flash::add('info', '休憩の記録は現在無効です。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
 
         try {
@@ -60,6 +65,10 @@ final class WorkSessionBreakController
         if (!is_array($user) || empty($user['id'])) {
             Flash::add('error', 'ログインが必要です。');
             return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        if (!BreakFeature::isEnabled()) {
+            Flash::add('info', '休憩の記録は現在無効です。');
+            return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
 
         try {

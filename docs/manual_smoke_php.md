@@ -12,16 +12,18 @@
    - `PASSWORD_PEPPER`（本番は必須。長いランダム文字列）
    - `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_SECONDS`
    - `MFA_TRUST_TTL_DAYS`（MFA信頼済みデバイスの有効期限。既定: 30）
+   - `TENANT_DATA_ENCRYPTION_KEY`（本番は必須。テナント情報の暗号化キー）
+   - `MFA_RESET_LOG_ENCRYPTION_KEY`（本番は必須。MFAリセット監査ログの暗号化キー）
    - `EXPORT_RETENTION_DAYS` / `EXPORT_MAX_FILES` / `EXPORT_MAX_TOTAL_MB`（エクスポートファイル保持設定）
    - `PAYROLL_RETENTION_DAYS`（給与明細保持期間。既定は無効）
 
 ### 2) DBスキーマ適用
 - MySQL 8.0 に `docs/php_mysql_schema.sql` を適用。
-  - 重要: `user_active_sessions`（同時ログイン制御）、`tenant_admin_mfa_reset_logs`（監査ログ）、`user_passkeys`（パスキー）が含まれる。
+  - 重要: `user_active_sessions`（同時ログイン制御）、`user_login_sessions`（ログイン履歴）、`signed_downloads`（署名URL）、`tenant_admin_mfa_reset_logs`（監査ログ）、`user_passkeys`（パスキー）が含まれる。
 
 ### 3) 起動
-- `php/` で `php -S 127.0.0.1:8000 -t public public/router.php`（ルーティング用。`/login` などのパスも動作）
-  - Windows 環境で `http://localhost:8000` が別プロセス（IPv6 `::1`）に割り当てられている場合があるため、ブラウザも `http://127.0.0.1:8000` で開いてください。
+- `php/` で `php -S localhost:8000 -t public public/router.php`（ルーティング用。`/login` などのパスも動作）
+  ~~- Windows 環境で `http://localhost:8000` が別プロセス（IPv6 `::1`）に割り当てられている場合があるため、ブラウザも `http://127.0.0.1:8000` で開いてください。~~
 - `http://localhost:8000/health` が `ok` を返すこと
 
 ### 4) 認証・アカウント系
@@ -55,21 +57,21 @@
 2. 端末Bで同一アカウントにログイン
 3. 端末Aで任意ページへ遷移した際にログアウトされ、Flashに「時刻/IP/端末情報」が表示されること
 
-### 8) プラットフォーム管理（`role=admin` かつ `tenant_id` が `NULL`）
+### 8) プラットフォーム管理（`role=platform_admin` かつ `tenant_id` が `NULL`）
 - `/platform/tenants`
   - テナント作成（確認チェック必須）が成功すること
   - テナント停止/再開（確認チェック必須）が成功すること
-  - テナント管理者MFAリセット/取消が成功すること（監査ログ暗号化キーの設定に注意）
+  - テナント管理者MFAリセット/取消が成功すること（本人確認2点一致、監査ログ暗号化キーの設定に注意）
 
 ### 9) 勤怠エクスポート / 給与明細
 - 勤怠エクスポート: `/admin/timesheets/export`
-  - 期間指定で Excel（.xlsx） / PDF がダウンロードできること（同一期間でもファイル生成が衝突しないこと）
+  - 期間指定で Excel（.xlsx） / PDF が署名URL経由でダウンロードできること（同一期間でもファイル生成が衝突しないこと）
   - 休憩(分)・実労働(分)・時間（x時間xx分）が含まれること（勤務中のレコードは「記録中」表示になること）
   - PDFは氏名が「姓/名」順で表示され、合計時間の行があること
 - 給与明細送信（テナント管理者）: `/admin/payslips/send`
   - 送信が成功し、従業員側の一覧に反映されること
 - 給与明細（従業員）: `/payrolls`
-  - 一覧が表示され、ダウンロードできること
+  - 一覧が表示され、署名URLでダウンロードできること
 
 ### 10) ストレージクリーンアップ（cron）
 - エクスポートファイル（`php/storage/exports`）の世代管理:

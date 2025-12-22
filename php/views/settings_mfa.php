@@ -7,7 +7,7 @@
   <h3>認証アプリ（OTP）</h3>
   <?php if (!empty($totpVerified)): ?>
     <p class="form-note success">認証アプリは有効です。</p>
-    <form method="post" action="/settings/mfa/totp/disable" class="form">
+    <form method="post" action="/settings/mfa/totp/disable" class="form" data-confirm-message="認証アプリを無効化します。よろしいですか？">
       <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
       <label class="form-checkbox">
         <input type="checkbox" name="confirmed" value="yes" required>
@@ -21,7 +21,7 @@
         セキュリティのため、登録用QRコードとシークレットの表示は一度のみです。
         もう一度表示するには、セットアップをやり直してください。
       </p>
-      <form method="post" action="/settings/mfa/totp/setup/reset" class="form">
+      <form method="post" action="/settings/mfa/totp/setup/reset" class="form" data-confirm-message="認証アプリのセットアップをやり直します。よろしいですか？">
         <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
         <button type="submit" class="btn secondary">セットアップをやり直す</button>
       </form>
@@ -79,7 +79,12 @@
   <?php endif; ?>
   <form method="post" action="/settings/mfa/recovery-codes/regenerate" class="form">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-    <button type="submit" class="btn secondary" <?= empty($totpVerified) ? 'disabled' : '' ?>>
+    <button
+      type="submit"
+      class="btn secondary"
+      <?= empty($totpVerified) ? 'disabled' : '' ?>
+      data-confirm-message="<?= !empty($hasRecoveryCodes) ? 'バックアップコードを再発行します。よろしいですか？' : 'バックアップコードを発行します。よろしいですか？' ?>"
+    >
       バックアップコードを<?= empty($hasRecoveryCodes) ? '発行' : '再発行' ?>
     </button>
   </form>
@@ -88,7 +93,7 @@
 <section class="card">
   <h3>信頼済みデバイス</h3>
   <p class="form-note">現在のアカウントに紐づく信頼済みデバイスをすべて無効化できます。不明な端末を使用した場合や紛失時に実行してください。</p>
-  <form method="post" action="/settings/mfa/trusted-devices/revoke" class="form">
+  <form method="post" action="/settings/mfa/trusted-devices/revoke" class="form" data-confirm-message="信頼済みデバイスをすべて無効化します。よろしいですか？">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
     <button type="submit" class="btn danger">信頼済みデバイスをすべて無効化</button>
   </form>

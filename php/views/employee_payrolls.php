@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>給与明細</h2>
-  <p class="form-note">受信済みの明細を確認できます。</p>
+  <p class="form-note">受信済みの明細を署名URLから確認できます。</p>
 </div>
 
 <section class="card">
@@ -8,7 +8,7 @@
     <table class="table">
       <thead>
         <tr>
-          <th>送信日</th>
+          <th>受給日</th>
           <th>送信日時</th>
           <th>操作</th>
         </tr>
@@ -21,7 +21,7 @@
             <tr>
               <td><?= $e($row['sent_on']) ?></td>
               <td><?= $e($row['sent_at']) ?></td>
-              <td><a class="btn link" href="/payrolls/<?= $e((string)$row['id']) ?>/download">ダウンロード</a></td>
+              <td><a class="btn link" href="/payrolls/<?= $e((string)$row['id']) ?>/download">署名URLでダウンロード</a></td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>

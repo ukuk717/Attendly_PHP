@@ -6,6 +6,7 @@ namespace Attendly\Database;
 
 use Attendly\Database;
 use Attendly\Support\AppTime;
+use Attendly\Security\TenantDataCipher;
 use DateTimeImmutable;
 use PDO;
 use RuntimeException;
@@ -13,6 +14,7 @@ use RuntimeException;
 final class Repository
 {
     private PDO $pdo;
+    private ?bool $payrollDownloadedAtAvailable = null;
 
     public function __construct(?PDO $pdo = null)
     {
@@ -118,7 +120,8 @@ final class Repository
      *   status:string,
      *   must_change_password?:bool,
      *   first_name?:string,
-     *   last_name?:string
+     *   last_name?:string,
+     *   phone_number?:?string
      * } $data
      * @return array{id:int,tenant_id:?int,username:string,email:string,role:string,status:string}
      */
@@ -126,8 +129,8 @@ final class Repository
     {
         $now = AppTime::now();
         $stmt = $this->pdo->prepare(
-            'INSERT INTO users (tenant_id, username, email, password_hash, role, employment_type, must_change_password, first_name, last_name, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO users (tenant_id, username, email, password_hash, role, employment_type, must_change_password, first_name, last_name, phone_number, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['tenant_id'] ?? null,
@@ -139,6 +142,7 @@ final class Repository
             !empty($data['must_change_password']) ? 1 : 0,
             $data['first_name'] ?? null,
             $data['last_name'] ?? null,
+            $data['phone_number'] ?? null,
             $data['status'],
             $this->formatDateTime($now),
         ]);
@@ -742,6 +746,10 @@ final class Repository
      *   tenant_id:?int,
      *   tenant_name:?string,
      *   tenant_uid:?string,
+     *   tenant_contact_email:?string,
+     *   tenant_contact_phone:?string,
+     *   tenant_created_at:?DateTimeImmutable,
+     *   tenant_status:?string,
      *   status:string
      * }>
      */
@@ -751,10 +759,15 @@ final class Repository
         $offset = max(0, $offset);
         $stmt = $this->pdo->prepare(
             'SELECT u.id, u.username, u.email, u.phone_number, u.tenant_id, u.status,
-                    t.name AS tenant_name, t.tenant_uid AS tenant_uid
+                    t.name AS tenant_name,
+                    t.tenant_uid AS tenant_uid,
+                    t.contact_email AS tenant_contact_email,
+                    t.contact_phone AS tenant_contact_phone,
+                    t.created_at AS tenant_created_at,
+                    t.status AS tenant_status
              FROM users u
              LEFT JOIN tenants t ON u.tenant_id = t.id
-             WHERE u.role = "tenant_admin"
+             WHERE (u.role = "tenant_admin" OR (u.role = "admin" AND u.tenant_id IS NOT NULL))
               ORDER BY u.id ASC
               LIMIT ? OFFSET ?'
         );
@@ -764,14 +777,21 @@ final class Repository
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $result = [];
         foreach ($rows as $row) {
+            $tenantName = TenantDataCipher::decrypt($row['tenant_name'] ?? null);
+            $tenantContactEmail = TenantDataCipher::decrypt($row['tenant_contact_email'] ?? null);
+            $tenantContactPhone = TenantDataCipher::decrypt($row['tenant_contact_phone'] ?? null);
             $result[] = [
                 'id' => (int)$row['id'],
                 'username' => (string)$row['username'],
                 'email' => (string)$row['email'],
                 'phone_number' => $row['phone_number'] !== null ? (string)$row['phone_number'] : null,
                 'tenant_id' => $row['tenant_id'] !== null ? (int)$row['tenant_id'] : null,
-                'tenant_name' => $row['tenant_name'] !== null ? (string)$row['tenant_name'] : null,
+                'tenant_name' => $tenantName !== null ? (string)$tenantName : null,
                 'tenant_uid' => $row['tenant_uid'] !== null ? (string)$row['tenant_uid'] : null,
+                'tenant_contact_email' => $tenantContactEmail !== null ? (string)$tenantContactEmail : null,
+                'tenant_contact_phone' => $tenantContactPhone !== null ? (string)$tenantContactPhone : null,
+                'tenant_created_at' => AppTime::fromStorage($row['tenant_created_at']),
+                'tenant_status' => $row['tenant_status'] !== null ? (string)$row['tenant_status'] : null,
                 'status' => (string)$row['status'],
             ];
         }
@@ -779,14 +799,33 @@ final class Repository
     }
 
     /**
-     * @return array{id:int,tenant_id:?int,username:string,email:string,role:string,status:string}|null
+     * @return array{
+     *   id:int,
+     *   tenant_id:?int,
+     *   username:string,
+     *   email:string,
+     *   phone_number:?string,
+     *   role:string,
+     *   status:string,
+     *   tenant_name:?string,
+     *   tenant_uid:?string,
+     *   tenant_contact_email:?string,
+     *   tenant_contact_phone:?string,
+     *   tenant_created_at:?DateTimeImmutable
+     * }|null
      */
     public function findTenantAdminById(int $id): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, username, email, role, status
-             FROM users
-             WHERE id = ? AND role = "tenant_admin"
+            'SELECT u.id, u.tenant_id, u.username, u.email, u.phone_number, u.role, u.status,
+                    t.name AS tenant_name,
+                    t.tenant_uid AS tenant_uid,
+                    t.contact_email AS tenant_contact_email,
+                    t.contact_phone AS tenant_contact_phone,
+                    t.created_at AS tenant_created_at
+             FROM users u
+             LEFT JOIN tenants t ON u.tenant_id = t.id
+             WHERE u.id = ? AND (u.role = "tenant_admin" OR (u.role = "admin" AND u.tenant_id IS NOT NULL))
              LIMIT 1'
         );
         $stmt->execute([$id]);
@@ -794,13 +833,22 @@ final class Repository
         if ($row === false) {
             return null;
         }
+        $tenantName = TenantDataCipher::decrypt($row['tenant_name'] ?? null);
+        $tenantContactEmail = TenantDataCipher::decrypt($row['tenant_contact_email'] ?? null);
+        $tenantContactPhone = TenantDataCipher::decrypt($row['tenant_contact_phone'] ?? null);
         return [
             'id' => (int)$row['id'],
             'tenant_id' => $row['tenant_id'] !== null ? (int)$row['tenant_id'] : null,
             'username' => (string)$row['username'],
             'email' => (string)$row['email'],
+            'phone_number' => $row['phone_number'] !== null ? (string)$row['phone_number'] : null,
             'role' => (string)$row['role'],
             'status' => (string)$row['status'],
+            'tenant_name' => $tenantName !== null ? (string)$tenantName : null,
+            'tenant_uid' => $row['tenant_uid'] !== null ? (string)$row['tenant_uid'] : null,
+            'tenant_contact_email' => $tenantContactEmail !== null ? (string)$tenantContactEmail : null,
+            'tenant_contact_phone' => $tenantContactPhone !== null ? (string)$tenantContactPhone : null,
+            'tenant_created_at' => AppTime::fromStorage($row['tenant_created_at']),
         ];
     }
 
@@ -971,6 +1019,239 @@ final class Repository
         $stmt->execute([$userId]);
     }
 
+    /**
+     * @return array{id:int}
+     */
+    public function createLoginSession(
+        int $userId,
+        string $sessionHash,
+        DateTimeImmutable $loginAt,
+        ?string $loginIp,
+        ?string $userAgent
+    ): array {
+        $sessionHash = trim($sessionHash);
+        if ($sessionHash === '' || strlen($sessionHash) !== 64) {
+            throw new \InvalidArgumentException('無効なセッションハッシュです。');
+        }
+        $ip = $loginIp !== null ? trim($loginIp) : null;
+        if ($ip !== null && mb_strlen($ip, 'UTF-8') > 64) {
+            $ip = mb_substr($ip, 0, 64, 'UTF-8');
+        }
+        $ua = $userAgent !== null ? trim($userAgent) : null;
+        if ($ua !== null) {
+            $ua = preg_replace('/[\r\n]/', ' ', $ua) ?? '';
+            $ua = trim($ua);
+            if ($ua !== '' && mb_strlen($ua, 'UTF-8') > 512) {
+                $ua = mb_substr($ua, 0, 512, 'UTF-8');
+            }
+            if ($ua === '') {
+                $ua = null;
+            }
+        }
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO user_login_sessions (user_id, session_hash, login_at, login_ip, user_agent, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)'
+        );
+        $now = AppTime::now();
+        $stmt->execute([
+            $userId,
+            $sessionHash,
+            $this->formatDateTime($loginAt),
+            $ip,
+            $ua,
+            $this->formatDateTime($now),
+        ]);
+        return ['id' => (int)$this->pdo->lastInsertId()];
+    }
+
+    public function revokeOtherLoginSessions(int $userId, string $currentHash, DateTimeImmutable $revokedAt): void
+    {
+        $currentHash = trim($currentHash);
+        if ($currentHash === '' || strlen($currentHash) !== 64) {
+            return;
+        }
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_login_sessions
+             SET revoked_at = ?
+             WHERE user_id = ? AND session_hash <> ? AND revoked_at IS NULL'
+        );
+        $stmt->execute([
+            $this->formatDateTime($revokedAt),
+            $userId,
+            $currentHash,
+        ]);
+    }
+
+    /**
+     * @return array{id:int,user_id:int,session_hash:string,login_at:DateTimeImmutable,revoked_at:?DateTimeImmutable}|null
+     */
+    public function findLoginSessionByHash(string $sessionHash): ?array
+    {
+        $sessionHash = trim($sessionHash);
+        if ($sessionHash === '' || strlen($sessionHash) !== 64) {
+            return null;
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT id, user_id, session_hash, login_at, revoked_at
+             FROM user_login_sessions
+             WHERE session_hash = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$sessionHash]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'user_id' => (int)$row['user_id'],
+            'session_hash' => (string)$row['session_hash'],
+            'login_at' => AppTime::fromStorage((string)$row['login_at']) ?? AppTime::now(),
+            'revoked_at' => AppTime::fromStorage($row['revoked_at']),
+        ];
+    }
+
+    /**
+     * @return array<int, array{id:int,login_at:DateTimeImmutable,user_agent:?string,revoked_at:?DateTimeImmutable,last_seen_at:?DateTimeImmutable}>
+     */
+    public function listLoginSessionsByUser(int $userId, int $limit = 20): array
+    {
+        $limit = max(1, min(50, $limit));
+        $stmt = $this->pdo->prepare(
+            'SELECT id, login_at, user_agent, revoked_at, last_seen_at
+             FROM user_login_sessions
+             WHERE user_id = ?
+             ORDER BY login_at DESC
+             LIMIT ?'
+        );
+        $stmt->bindValue(1, $userId, PDO::PARAM_INT);
+        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = [
+                'id' => (int)$row['id'],
+                'login_at' => AppTime::fromStorage((string)$row['login_at']) ?? AppTime::now(),
+                'user_agent' => $row['user_agent'] !== null ? (string)$row['user_agent'] : null,
+                'revoked_at' => AppTime::fromStorage($row['revoked_at']),
+                'last_seen_at' => AppTime::fromStorage($row['last_seen_at']),
+            ];
+        }
+        return $result;
+    }
+
+    public function revokeLoginSessionById(int $userId, int $sessionId, DateTimeImmutable $revokedAt): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE user_login_sessions
+             SET revoked_at = ?
+             WHERE id = ? AND user_id = ? AND revoked_at IS NULL'
+        );
+        $stmt->execute([
+            $this->formatDateTime($revokedAt),
+            $sessionId,
+            $userId,
+        ]);
+        return $stmt->rowCount() > 0;
+    }
+
+    /**
+     * @param array{
+     *   token_hash:string,
+     *   target_type:string,
+     *   source_id:?int,
+     *   file_path:string,
+     *   file_name:string,
+     *   content_type:?string,
+     *   created_by:?int,
+     *   expires_at:DateTimeImmutable
+     * } $data
+     * @return array{id:int,token_hash:string,expires_at:DateTimeImmutable}
+     */
+    public function createSignedDownload(array $data): array
+    {
+        $tokenHash = trim((string)$data['token_hash']);
+        if ($tokenHash === '' || strlen($tokenHash) !== 64) {
+            throw new \InvalidArgumentException('無効なトークンです。');
+        }
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO signed_downloads (token_hash, target_type, source_id, file_path, file_name, content_type, created_by, expires_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $tokenHash,
+            (string)$data['target_type'],
+            $data['source_id'] ?? null,
+            (string)$data['file_path'],
+            (string)$data['file_name'],
+            $data['content_type'] ?? null,
+            $data['created_by'] ?? null,
+            $this->formatDateTime($data['expires_at']),
+            $this->formatDateTime($now),
+        ]);
+        return [
+            'id' => (int)$this->pdo->lastInsertId(),
+            'token_hash' => $tokenHash,
+            'expires_at' => $data['expires_at'],
+        ];
+    }
+
+    /**
+     * @return array{id:int,token_hash:string,target_type:string,source_id:?int,file_path:string,file_name:string,content_type:?string,expires_at:DateTimeImmutable,revoked_at:?DateTimeImmutable}|null
+     */
+    public function findSignedDownloadByHash(string $tokenHash): ?array
+    {
+        $tokenHash = trim($tokenHash);
+        if ($tokenHash === '' || strlen($tokenHash) !== 64) {
+            return null;
+        }
+        $stmt = $this->pdo->prepare(
+            'SELECT id, token_hash, target_type, source_id, file_path, file_name, content_type, expires_at, revoked_at
+             FROM signed_downloads
+             WHERE token_hash = ?
+             LIMIT 1'
+        );
+        $stmt->execute([$tokenHash]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'token_hash' => (string)$row['token_hash'],
+            'target_type' => (string)$row['target_type'],
+            'source_id' => $row['source_id'] !== null ? (int)$row['source_id'] : null,
+            'file_path' => (string)$row['file_path'],
+            'file_name' => (string)$row['file_name'],
+            'content_type' => $row['content_type'] !== null ? (string)$row['content_type'] : null,
+            'expires_at' => AppTime::fromStorage((string)$row['expires_at']) ?? AppTime::now(),
+            'revoked_at' => AppTime::fromStorage($row['revoked_at']),
+        ];
+    }
+
+    public function touchSignedDownload(int $id, DateTimeImmutable $accessedAt): void
+    {
+        $stmt = $this->pdo->prepare(
+            'UPDATE signed_downloads SET last_accessed_at = ? WHERE id = ?'
+        );
+        $stmt->execute([$this->formatDateTime($accessedAt), $id]);
+    }
+
+    public function deleteExpiredSignedDownloads(DateTimeImmutable $now, int $limit = 5000): int
+    {
+        $limit = max(1, min(10000, $limit));
+        $stmt = $this->pdo->prepare(
+            'DELETE FROM signed_downloads WHERE expires_at < ? OR revoked_at IS NOT NULL LIMIT ?'
+        );
+        $stmt->bindValue(1, $this->formatDateTime($now), PDO::PARAM_STR);
+        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->rowCount();
+    }
+
     public function beginTransaction(): void
     {
         if ($this->pdo->inTransaction()) {
@@ -1076,7 +1357,7 @@ final class Repository
 
     public function countTenantAdminsForPlatform(): int
     {
-        $stmt = $this->pdo->query('SELECT COUNT(*) AS c FROM users WHERE role = "tenant_admin"');
+        $stmt = $this->pdo->query('SELECT COUNT(*) AS c FROM users WHERE role = "tenant_admin" OR (role = "admin" AND tenant_id IS NOT NULL)');
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!is_array($row) || !isset($row['c'])) {
             return 0;
@@ -2268,13 +2549,15 @@ final class Repository
     }
 
     /**
-     * @return array<int, array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable}>
+     * @return array<int, array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable,downloaded_at:?DateTimeImmutable}>
      */
     public function listPayrollRecordsByEmployee(int $employeeId, int $limit = 50): array
     {
         $limit = max(1, min(200, $limit));
+        $hasDownloadedAt = $this->payrollDownloadedAtAvailable();
+        $downloadedColumn = $hasDownloadedAt ? ', downloaded_at' : '';
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, employee_id, original_file_name, stored_file_path, sent_on, sent_at
+            'SELECT id, tenant_id, employee_id, original_file_name, stored_file_path, sent_on, sent_at' . $downloadedColumn . '
              FROM payroll_records
              WHERE employee_id = ? AND archived_at IS NULL
              ORDER BY sent_at DESC
@@ -2294,19 +2577,22 @@ final class Repository
                 'stored_file_path' => (string)$row['stored_file_path'],
                 'sent_on' => AppTime::fromStorage((string)$row['sent_on']) ?? AppTime::now(),
                 'sent_at' => AppTime::fromStorage((string)$row['sent_at']) ?? AppTime::now(),
+                'downloaded_at' => AppTime::fromStorage($row['downloaded_at'] ?? null),
             ];
         }
         return $result;
     }
 
     /**
-     * @return array<int, array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable}>
+     * @return array<int, array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable,downloaded_at:?DateTimeImmutable}>
      */
     public function listPayrollRecordsByTenant(int $tenantId, int $limit = 50): array
     {
         $limit = max(1, min(200, $limit));
+        $hasDownloadedAt = $this->payrollDownloadedAtAvailable();
+        $downloadedColumn = $hasDownloadedAt ? ', downloaded_at' : '';
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, employee_id, original_file_name, stored_file_path, sent_on, sent_at
+            'SELECT id, tenant_id, employee_id, original_file_name, stored_file_path, sent_on, sent_at' . $downloadedColumn . '
              FROM payroll_records
              WHERE tenant_id = ? AND archived_at IS NULL
              ORDER BY sent_at DESC
@@ -2326,6 +2612,7 @@ final class Repository
                 'stored_file_path' => (string)$row['stored_file_path'],
                 'sent_on' => AppTime::fromStorage((string)$row['sent_on']) ?? AppTime::now(),
                 'sent_at' => AppTime::fromStorage((string)$row['sent_at']) ?? AppTime::now(),
+                'downloaded_at' => AppTime::fromStorage($row['downloaded_at'] ?? null),
             ];
         }
         return $result;
@@ -2369,7 +2656,8 @@ final class Repository
      *   mime_type:?string,
      *   file_size:?int,
      *   sent_on:DateTimeImmutable,
-     *   sent_at:DateTimeImmutable
+     *   sent_at:DateTimeImmutable,
+     *   downloaded_at:?DateTimeImmutable
      * }>
      */
     public function listPayrollRecordsByTenantForAdmin(int $tenantId, int $limit = 50, int $offset = 0, ?int $employeeId = null): array
@@ -2380,6 +2668,8 @@ final class Repository
             $employeeId = null;
         }
 
+        $hasDownloadedAt = $this->payrollDownloadedAtAvailable();
+        $downloadedColumn = $hasDownloadedAt ? ', pr.downloaded_at' : '';
         $whereEmployee = $employeeId !== null ? ' AND pr.employee_id = ?' : '';
         $sql = 'SELECT
                     pr.id,
@@ -2390,7 +2680,7 @@ final class Repository
                     pr.mime_type,
                     pr.file_size,
                     pr.sent_on,
-                    pr.sent_at,
+                    pr.sent_at' . $downloadedColumn . ',
                     u.email AS employee_email,
                     u.first_name AS employee_first_name,
                     u.last_name AS employee_last_name,
@@ -2431,18 +2721,21 @@ final class Repository
                 'file_size' => $fileSize,
                 'sent_on' => AppTime::fromStorage((string)$row['sent_on']) ?? AppTime::now(),
                 'sent_at' => AppTime::fromStorage((string)$row['sent_at']) ?? AppTime::now(),
+                'downloaded_at' => AppTime::fromStorage($row['downloaded_at'] ?? null),
             ];
         }
         return $result;
     }
 
     /**
-     * @return array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable}|null
+     * @return array{id:int,tenant_id:int,employee_id:int,original_file_name:string,stored_file_path:string,mime_type:?string,sent_on:DateTimeImmutable,sent_at:DateTimeImmutable,downloaded_at:?DateTimeImmutable}|null
      */
     public function findPayrollRecordById(int $id): ?array
     {
+        $hasDownloadedAt = $this->payrollDownloadedAtAvailable();
+        $downloadedColumn = $hasDownloadedAt ? ', downloaded_at' : '';
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_id, employee_id, original_file_name, stored_file_path, sent_on, sent_at
+            'SELECT id, tenant_id, employee_id, original_file_name, stored_file_path, mime_type, sent_on, sent_at' . $downloadedColumn . '
              FROM payroll_records
              WHERE id = ? AND archived_at IS NULL
              LIMIT 1'
@@ -2458,9 +2751,24 @@ final class Repository
             'employee_id' => (int)$row['employee_id'],
             'original_file_name' => (string)$row['original_file_name'],
             'stored_file_path' => (string)$row['stored_file_path'],
+            'mime_type' => $row['mime_type'] !== null ? (string)$row['mime_type'] : null,
             'sent_on' => AppTime::fromStorage((string)$row['sent_on']) ?? AppTime::now(),
             'sent_at' => AppTime::fromStorage((string)$row['sent_at']) ?? AppTime::now(),
+            'downloaded_at' => AppTime::fromStorage($row['downloaded_at'] ?? null),
         ];
+    }
+
+    public function markPayrollRecordDownloaded(int $id, DateTimeImmutable $downloadedAt): void
+    {
+        if (!$this->payrollDownloadedAtAvailable()) {
+            return;
+        }
+        $stmt = $this->pdo->prepare(
+            'UPDATE payroll_records
+             SET downloaded_at = COALESCE(downloaded_at, ?)
+             WHERE id = ? AND archived_at IS NULL'
+        );
+        $stmt->execute([$this->formatDateTime($downloadedAt), $id]);
     }
 
     /**
@@ -2576,12 +2884,12 @@ final class Repository
     }
 
     /**
-     * @return array{id:int,name:?string,status:string,require_employee_email_verification:bool}|null
+     * @return array{id:int,name:?string,contact_email:?string,contact_phone:?string,status:string,require_employee_email_verification:bool,created_at:?DateTimeImmutable}|null
      */
     public function findTenantById(int $id): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, name, status, require_employee_email_verification
+            'SELECT id, name, contact_email, contact_phone, status, require_employee_email_verification, created_at
              FROM tenants
              WHERE id = ?
              LIMIT 1'
@@ -2591,11 +2899,17 @@ final class Repository
         if ($row === false) {
             return null;
         }
+        $name = TenantDataCipher::decrypt($row['name'] ?? null);
+        $contactEmail = TenantDataCipher::decrypt($row['contact_email'] ?? null);
+        $contactPhone = TenantDataCipher::decrypt($row['contact_phone'] ?? null);
         return [
             'id' => (int)$row['id'],
-            'name' => $row['name'] !== null ? (string)$row['name'] : null,
+            'name' => $name !== null ? (string)$name : null,
+            'contact_email' => $contactEmail !== null ? (string)$contactEmail : null,
+            'contact_phone' => $contactPhone !== null ? (string)$contactPhone : null,
             'status' => (string)$row['status'],
             'require_employee_email_verification' => (bool)$row['require_employee_email_verification'],
+            'created_at' => AppTime::fromStorage($row['created_at']),
         ];
     }
 
@@ -2621,6 +2935,7 @@ final class Repository
      *   tenant_uid:string,
      *   name:?string,
      *   contact_email:?string,
+     *   contact_phone:?string,
      *   status:string,
      *   deactivated_at:?DateTimeImmutable,
      *   require_employee_email_verification:bool,
@@ -2632,7 +2947,7 @@ final class Repository
         $limit = max(1, min(500, $limit));
         $offset = max(0, $offset);
         $stmt = $this->pdo->prepare(
-            'SELECT id, tenant_uid, name, contact_email, status, deactivated_at, require_employee_email_verification, created_at
+            'SELECT id, tenant_uid, name, contact_email, contact_phone, status, deactivated_at, require_employee_email_verification, created_at
              FROM tenants
              ORDER BY id ASC
              LIMIT ? OFFSET ?'
@@ -2643,11 +2958,15 @@ final class Repository
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         $result = [];
         foreach ($rows as $row) {
+            $name = TenantDataCipher::decrypt($row['name'] ?? null);
+            $contactEmail = TenantDataCipher::decrypt($row['contact_email'] ?? null);
+            $contactPhone = TenantDataCipher::decrypt($row['contact_phone'] ?? null);
             $result[] = [
                 'id' => (int)$row['id'],
                 'tenant_uid' => (string)$row['tenant_uid'],
-                'name' => $row['name'] !== null ? (string)$row['name'] : null,
-                'contact_email' => $row['contact_email'] !== null ? (string)$row['contact_email'] : null,
+                'name' => $name !== null ? (string)$name : null,
+                'contact_email' => $contactEmail !== null ? (string)$contactEmail : null,
+                'contact_phone' => $contactPhone !== null ? (string)$contactPhone : null,
                 'status' => (string)$row['status'],
                 'deactivated_at' => AppTime::fromStorage($row['deactivated_at']),
                 'require_employee_email_verification' => (bool)$row['require_employee_email_verification'],
@@ -2658,9 +2977,9 @@ final class Repository
     }
 
     /**
-     * @return array{id:int,tenant_uid:string,name:?string,contact_email:?string,status:string}
+     * @return array{id:int,tenant_uid:string,name:?string,contact_email:?string,contact_phone:?string,status:string}
      */
-    public function createTenant(string $name, ?string $contactEmail = null): array
+    public function createTenant(string $name, string $contactEmail, ?string $contactPhone = null): array
     {
         $name = trim($name);
         if ($name === '' || mb_strlen($name, 'UTF-8') > 255) {
@@ -2669,14 +2988,24 @@ final class Repository
         if (preg_match('/[\r\n]/', $name)) {
             throw new \InvalidArgumentException('テナント名に改行を含めることはできません。');
         }
-        $email = $contactEmail !== null ? strtolower(trim($contactEmail)) : null;
-        if ($email !== null) {
-            if ($email === '') {
-                $email = null;
-            } elseif (mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $email)) {
-                throw new \InvalidArgumentException('連絡先メールアドレスが不正です。');
+        $email = strtolower(trim($contactEmail));
+        if ($email === '' || mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $email)) {
+            throw new \InvalidArgumentException('連絡先メールアドレスが不正です。');
+        }
+        $phone = $contactPhone !== null ? trim($contactPhone) : null;
+        if ($phone !== null) {
+            $phone = preg_replace('/[^\d+]/', '', $phone) ?? '';
+            if ($phone === '') {
+                $phone = null;
+            }
+            if ($phone !== null && mb_strlen($phone, 'UTF-8') > 32) {
+                throw new \InvalidArgumentException('連絡先電話番号が不正です。');
             }
         }
+
+        $encName = TenantDataCipher::encrypt($name);
+        $encEmail = TenantDataCipher::encrypt($email);
+        $encPhone = TenantDataCipher::encrypt($phone);
 
         $now = $this->formatDateTime(AppTime::now());
         $attempts = 0;
@@ -2688,16 +3017,17 @@ final class Repository
             $tenantUid = bin2hex(random_bytes(16));
             try {
                 $stmt = $this->pdo->prepare(
-                    'INSERT INTO tenants (tenant_uid, name, contact_email, status, deactivated_at, require_employee_email_verification, created_at)
-                     VALUES (?, ?, ?, "active", NULL, 0, ?)'
+                    'INSERT INTO tenants (tenant_uid, name, contact_email, contact_phone, status, deactivated_at, require_employee_email_verification, created_at)
+                     VALUES (?, ?, ?, ?, "active", NULL, 0, ?)'
                 );
-                $stmt->execute([$tenantUid, $name, $email, $now]);
+                $stmt->execute([$tenantUid, $encName, $encEmail, $encPhone, $now]);
                 $id = (int)$this->pdo->lastInsertId();
                 return [
                     'id' => $id,
                     'tenant_uid' => $tenantUid,
                     'name' => $name,
                     'contact_email' => $email,
+                    'contact_phone' => $phone,
                     'status' => 'active',
                 ];
             } catch (\PDOException $e) {
@@ -3014,6 +3344,28 @@ final class Repository
     private function formatDateTime(DateTimeImmutable $dt): string
     {
         return AppTime::formatForStorage($dt);
+    }
+
+    private function payrollDownloadedAtAvailable(): bool
+    {
+        if ($this->payrollDownloadedAtAvailable !== null) {
+            return $this->payrollDownloadedAtAvailable;
+        }
+        try {
+            $stmt = $this->pdo->prepare(
+                'SELECT 1
+                 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND TABLE_NAME = "payroll_records"
+                   AND COLUMN_NAME = "downloaded_at"
+                 LIMIT 1'
+            );
+            $stmt->execute();
+            $this->payrollDownloadedAtAvailable = (bool)$stmt->fetchColumn();
+        } catch (\Throwable) {
+            $this->payrollDownloadedAtAvailable = false;
+        }
+        return $this->payrollDownloadedAtAvailable;
     }
 
     /**

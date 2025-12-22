@@ -11,24 +11,40 @@ use Attendly\Support\RateLimiter;
 use DateTimeImmutable;
 use Psr\Http\Message\UploadedFileInterface;
 use RuntimeException;
+use Attendly\Services\SignedDownloadService;
 
 final class PayslipService
 {
     private Repository $repository;
     private Mailer $mailer;
+    private SignedDownloadService $signedDownloads;
     private string $storageDir;
     private int $maxUploadBytes;
+    private int $signedUrlTtlDays;
 
-    public function __construct(?Repository $repository = null, ?Mailer $mailer = null, ?string $storageDir = null)
+    public function __construct(
+        ?Repository $repository = null,
+        ?Mailer $mailer = null,
+        ?SignedDownloadService $signedDownloads = null,
+        ?string $storageDir = null
+    )
     {
         $this->repository = $repository ?? new Repository();
         $this->mailer = $mailer ?? new Mailer();
+        $this->signedDownloads = $signedDownloads ?? new SignedDownloadService($this->repository);
         $this->storageDir = $storageDir ?: dirname(__DIR__, 2) . '/storage/payslips';
         $maxMb = filter_var($_ENV['PAYSLIP_UPLOAD_MAX_MB'] ?? 10, FILTER_VALIDATE_INT, ['options' => ['default' => 10, 'min_range' => 1, 'max_range' => 50]]);
         if ($maxMb === false) {
             $maxMb = 10;
         }
         $this->maxUploadBytes = (int)$maxMb * 1024 * 1024;
+        $ttlDays = filter_var($_ENV['SIGNED_URL_TTL_DAYS'] ?? 7, FILTER_VALIDATE_INT, [
+            'options' => ['default' => 7, 'min_range' => 1, 'max_range' => 30],
+        ]);
+        if ($ttlDays === false) {
+            $ttlDays = 7;
+        }
+        $this->signedUrlTtlDays = (int)$ttlDays;
     }
 
     /**
@@ -37,7 +53,7 @@ final class PayslipService
      *   employee_id:int,
      *   uploaded_by:int,
      *   sent_on:DateTimeImmutable,
-     *   summary:string,
+     *   summary:?string,
      *   net_amount:?float
      * } $data
      * @return array{id:int,stored_file_path:string}
@@ -63,17 +79,18 @@ final class PayslipService
         $brand = $_ENV['APP_BRAND_NAME'] ?? 'Attendly';
         $subject = sprintf('【%s】給与明細のご案内（%s）', $brand, $data['sent_on']->format('Y-m-d'));
         $employeeLabel = $this->buildEmployeeLabel($employee);
+        $summary = trim((string)($data['summary'] ?? ''));
         $bodyLines = [
             "{$employeeLabel} 様",
             '',
             "{$brand} から給与明細のご案内です。",
-            '以下の内容をご確認ください。',
+            '以下の署名付きURLからダウンロードしてください（有効期限あり）。',
             '',
             '支給日: ' . $data['sent_on']->format('Y-m-d'),
             $data['net_amount'] !== null ? ('支給額(目安): ' . number_format($data['net_amount'], 0) . ' 円') : null,
-            '概要: ' . $data['summary'],
+            $summary !== '' ? ('概要: ' . $summary) : null,
             '',
-            '詳細は社内ポータルで確認してください。',
+            'URLの有効期限: ' . $this->signedUrlTtlDays . '日',
         ];
         $body = implode("\n", array_filter($bodyLines, static fn($line) => $line !== null));
 
@@ -111,6 +128,7 @@ final class PayslipService
         }
 
         $record = null;
+        $signed = null;
         try {
             $record = $this->repository->createPayrollRecord([
                 'tenant_id' => $data['tenant_id'],
@@ -126,7 +144,14 @@ final class PayslipService
             if (empty($employee['email'])) {
                 throw new RuntimeException('従業員のメールアドレスが設定されていません。');
             }
-            $this->mailer->send($employee['email'], $subject, $body);
+            $signed = $this->signedDownloads->issueForPayslip([
+                'id' => $record['id'],
+                'stored_file_path' => $record['stored_file_path'],
+                'original_file_name' => $record['original_file_name'],
+                'mime_type' => $mimeType,
+            ], $data['uploaded_by']);
+            $bodyWithLink = $body . "\n\nダウンロードURL:\n" . $signed['url'];
+            $this->mailer->send($employee['email'], $subject, $bodyWithLink);
         } catch (\Throwable $e) {
             if (is_string($storedFilePath) && $storedFilePath !== '') {
                 @unlink($storedFilePath);
@@ -140,6 +165,8 @@ final class PayslipService
         return [
             'id' => $record['id'],
             'stored_file_path' => $record['stored_file_path'],
+            'signed_url' => $signed !== null ? $signed['url'] : null,
+            'signed_expires_at' => $signed !== null ? $signed['expires_at'] : null,
         ];
     }
 

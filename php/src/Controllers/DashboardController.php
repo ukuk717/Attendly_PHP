@@ -9,6 +9,7 @@ use Attendly\Security\CsrfToken;
 use Attendly\Services\BreakComplianceService;
 use Attendly\Services\WorkSessionService;
 use Attendly\Support\AppTime;
+use Attendly\Support\BreakFeature;
 use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
@@ -22,12 +23,14 @@ final class DashboardController
     private Repository $repository;
     private WorkSessionService $workSessions;
     private View $view;
+    private bool $breaksEnabled;
 
     public function __construct(?View $view = null, ?Repository $repository = null, ?WorkSessionService $workSessions = null)
     {
         $this->view = $view ?? new View(dirname(__DIR__, 2) . '/views');
         $this->repository = $repository ?? new Repository();
         $this->workSessions = $workSessions ?? new WorkSessionService($this->repository);
+        $this->breaksEnabled = BreakFeature::isEnabled();
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -37,10 +40,10 @@ final class DashboardController
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
         $role = (string)($currentUser['role'] ?? 'employee');
-        if ($role === 'admin' && empty($currentUser['tenant_id'])) {
+        if (in_array($role, ['platform_admin', 'admin'], true) && empty($currentUser['tenant_id'])) {
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
-        if ($role === 'tenant_admin' || $role === 'admin') {
+        if ($role === 'tenant_admin') {
             return $this->renderTenantAdmin($request, $response, $currentUser);
         }
         return $this->renderEmployee($request, $response, $currentUser);
@@ -60,6 +63,7 @@ final class DashboardController
             'dailySummary' => $data['daily_summary'],
             'monthlyTotal' => $data['monthly_total_formatted'],
             'timezone' => $data['timezone'],
+            'breaksEnabled' => $this->breaksEnabled,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -119,7 +123,7 @@ final class DashboardController
 
         $tenantSessions = $this->repository->listWorkSessionsByTenantOverlapping($tenantId, $monthStart, $monthEndExclusive);
         $breaksBySessionId = [];
-        if ($tenantSessions !== []) {
+        if ($this->breaksEnabled && $tenantSessions !== []) {
             $sessionIds = array_map(static fn(array $row): int => (int)$row['id'], $tenantSessions);
             $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
             try {
@@ -147,18 +151,20 @@ final class DashboardController
         }
 
         $monthlySummary = [];
-        $edgeMinutes = BreakComplianceService::edgeBreakWarningMinutes();
+        $edgeMinutes = $this->breaksEnabled ? BreakComplianceService::edgeBreakWarningMinutes() : 0;
         foreach ($employeesActive as $employee) {
             $employeeId = (int)$employee['id'];
             $sessions = $sessionsByUserId[$employeeId] ?? [];
             $minutes = $this->calculateNetMinutesWithinRange($sessions, $monthStart, $monthEndExclusive, $breaksBySessionId);
-            $breakWarnings = $this->calculateBreakWarningStatsWithinRange(
-                $sessions,
-                $monthStart,
-                $monthEndExclusive,
-                $breaksBySessionId,
-                $edgeMinutes
-            );
+            $breakWarnings = $this->breaksEnabled
+                ? $this->calculateBreakWarningStatsWithinRange(
+                    $sessions,
+                    $monthStart,
+                    $monthEndExclusive,
+                    $breaksBySessionId,
+                    $edgeMinutes
+                )
+                : ['shortageDays' => 0, 'edgeDays' => 0];
             $monthlySummary[] = [
                 'user' => [
                     'id' => $employeeId,
@@ -236,11 +242,13 @@ final class DashboardController
                 continue;
             }
             $grossMinutes = (int)floor(($boundedEnd->getTimestamp() - $boundedStart->getTimestamp()) / 60);
-            $breakMinutes = $this->sumBreakExcludedMinutes(
-                $breaksBySessionId[(int)($session['id'] ?? 0)] ?? [],
-                $boundedStart,
-                $boundedEnd
-            );
+            $breakMinutes = $this->breaksEnabled
+                ? $this->sumBreakExcludedMinutes(
+                    $breaksBySessionId[(int)($session['id'] ?? 0)] ?? [],
+                    $boundedStart,
+                    $boundedEnd
+                )
+                : 0;
             $minutes += max(0, $grossMinutes - $breakMinutes);
         }
         return $minutes;
@@ -277,6 +285,9 @@ final class DashboardController
         array $breaksBySessionId,
         int $edgeMinutes
     ): array {
+        if (!$this->breaksEnabled) {
+            return ['shortageDays' => 0, 'edgeDays' => 0];
+        }
         $dailyNetMinutes = [];
         $dailyBreakMinutes = [];
         $dailyEdgeWarning = [];

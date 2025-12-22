@@ -126,33 +126,4 @@
     <a class="link" href="/login/mfa/cancel">ログインをやり直す</a>
   </div>
 </section>
-
-<script>
-  (function () {
-    const resendButton = document.querySelector('[data-resend-button]');
-    const countdownEl = document.getElementById('emailResendCountdown');
-    if (!resendButton || !countdownEl) {
-      return;
-    }
-    let remaining = Number.parseInt(countdownEl.getAttribute('data-countdown-seconds'), 10);
-    const isLocked = resendButton.getAttribute('data-locked') === 'true';
-    if (!Number.isFinite(remaining) || remaining <= 0) {
-      return;
-    }
-    const updateCountdown = () => {
-      if (remaining <= 0) {
-        countdownEl.textContent = '';
-        if (!isLocked) {
-          resendButton.disabled = false;
-        }
-        clearInterval(timerId);
-        return;
-      }
-      countdownEl.textContent = `(${remaining}秒後)`;
-      remaining -= 1;
-    };
-    resendButton.disabled = true;
-    updateCountdown();
-    const timerId = setInterval(updateCountdown, 1000);
-  })();
-</script>
+<script src="/mfa_login.js" defer></script>

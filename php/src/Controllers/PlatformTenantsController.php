@@ -9,6 +9,7 @@ use Attendly\Security\CsrfToken;
 use Attendly\Security\SensitiveLogPayload;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
+use Attendly\Support\PasswordHasher;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -38,7 +39,14 @@ final class PlatformTenantsController
         $adminsOffset = ($adminsPage - 1) * $this->adminsPerPage;
 
         $tenantTotal = $this->repository->countTenantsForPlatform();
-        $tenants = $this->repository->listTenantsForPlatform($this->tenantsPerPage, $tenantsOffset);
+        $tenantRows = $this->repository->listTenantsForPlatform($this->tenantsPerPage, $tenantsOffset);
+        $tenants = array_map(static function (array $tenant): array {
+            $createdAt = $tenant['created_at'] instanceof \DateTimeImmutable
+                ? $tenant['created_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
+                : null;
+            $tenant['created_at_display'] = $createdAt;
+            return $tenant;
+        }, $tenantRows);
 
         $totalAdmins = $this->repository->countTenantAdminsForPlatform();
         $admins = $this->repository->listTenantAdminsForPlatform($this->adminsPerPage, $adminsOffset);
@@ -57,6 +65,9 @@ final class PlatformTenantsController
             $adminId = (int)$admin['id'];
             $hasTotp = isset($hasTotpMap[$adminId]);
             $latest = $latestResetMap[$adminId] ?? null;
+            $tenantCreatedAt = $admin['tenant_created_at'] instanceof \DateTimeImmutable
+                ? $admin['tenant_created_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
+                : null;
             $rows[] = [
                 'id' => $adminId,
                 'username' => (string)$admin['username'],
@@ -64,6 +75,10 @@ final class PlatformTenantsController
                 'phoneNumber' => $admin['phone_number'] !== null ? (string)$admin['phone_number'] : null,
                 'tenantName' => $admin['tenant_name'] !== null ? (string)$admin['tenant_name'] : null,
                 'tenantUid' => $admin['tenant_uid'] !== null ? (string)$admin['tenant_uid'] : null,
+                'tenantContactEmail' => $admin['tenant_contact_email'] !== null ? (string)$admin['tenant_contact_email'] : null,
+                'tenantContactPhone' => $admin['tenant_contact_phone'] !== null ? (string)$admin['tenant_contact_phone'] : null,
+                'tenantCreatedAt' => $tenantCreatedAt,
+                'tenantStatus' => $admin['tenant_status'] !== null ? (string)$admin['tenant_status'] : null,
                 'status' => (string)$admin['status'],
                 'hasMfa' => $hasTotp,
                 'lastReset' => $this->formatResetLog($latest),
@@ -85,6 +100,11 @@ final class PlatformTenantsController
             'hasNext' => ($adminsOffset + $this->adminsPerPage) < $totalAdmins,
         ];
 
+        $generated = $_SESSION['generated_tenant_credential'] ?? null;
+        if (isset($_SESSION['generated_tenant_credential'])) {
+            unset($_SESSION['generated_tenant_credential']);
+        }
+
         $html = $this->view->renderWithLayout('platform_tenants', [
             'title' => 'テナント管理',
             'csrf' => CsrfToken::getToken(),
@@ -96,6 +116,7 @@ final class PlatformTenantsController
             'tenantsPagination' => $tenantsPagination,
             'tenantAdmins' => $rows,
             'adminsPagination' => $adminsPagination,
+            'generated' => is_array($generated) ? $generated : null,
         ], 'platform_layout');
 
         $response->getBody()->write($html);
@@ -113,14 +134,30 @@ final class PlatformTenantsController
 
         $name = trim((string)($body['name'] ?? ''));
         $contactEmail = trim((string)($body['contactEmail'] ?? ''));
+        $adminEmail = trim((string)($body['adminEmail'] ?? ''));
+        $contactPhone = trim((string)($body['contactPhone'] ?? ''));
         if ($name === '' || mb_strlen($name, 'UTF-8') > 255 || preg_match('/[\r\n]/', $name)) {
             Flash::add('error', 'テナント名を入力してください（255文字以内）。');
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
-        $email = $contactEmail !== '' ? strtolower($contactEmail) : null;
-        if ($email !== null && (mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $email))) {
-            Flash::add('error', '連絡先メールアドレスが不正です。');
+        $email = strtolower($contactEmail);
+        if ($email === '' || mb_strlen($email, 'UTF-8') > 254 || !filter_var($email, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $email)) {
+            Flash::add('error', '連絡先メールアドレスを入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        $adminEmail = strtolower($adminEmail);
+        if ($adminEmail === '' || mb_strlen($adminEmail, 'UTF-8') > 254 || !filter_var($adminEmail, FILTER_VALIDATE_EMAIL) || preg_match('/[\r\n]/', $adminEmail)) {
+            Flash::add('error', '管理者メールアドレスを入力してください。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        if ($contactPhone !== '') {
+            $contactPhone = preg_replace('/[^\d+]/', '', $contactPhone) ?? '';
+            if ($contactPhone === '' || mb_strlen($contactPhone, 'UTF-8') > 32) {
+                Flash::add('error', '電話番号が不正です。');
+                return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+            }
+        } else {
+            $contactPhone = null;
         }
         $confirmed = strtolower(trim((string)($body['confirmed'] ?? '')));
         if ($confirmed !== 'yes') {
@@ -128,12 +165,46 @@ final class PlatformTenantsController
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
 
+        $existingAdmin = $this->repository->findUserByEmail($adminEmail);
+        if ($existingAdmin !== null) {
+            Flash::add('error', '指定された管理者メールアドレスは既に使用されています。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        $initialPassword = $this->generateInitialPassword(16);
+        $hasher = new PasswordHasher();
         try {
-            $tenant = $this->repository->createTenant($name, $email);
+            $passwordHash = $hasher->hash($initialPassword);
         } catch (\Throwable) {
+            Flash::add('error', '初期パスワードの生成に失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+
+        try {
+            $this->repository->beginTransaction();
+            $tenant = $this->repository->createTenant($name, $email, $contactPhone);
+            $this->repository->createUser([
+                'tenant_id' => $tenant['id'],
+                'username' => $adminEmail,
+                'email' => $adminEmail,
+                'password_hash' => $passwordHash,
+                'role' => 'tenant_admin',
+                'status' => 'active',
+                'must_change_password' => true,
+                'phone_number' => $contactPhone,
+            ]);
+            $this->repository->commit();
+        } catch (\Throwable) {
+            $this->repository->rollback();
             Flash::add('error', 'テナントの作成に失敗しました。時間をおいて再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
+
+        $_SESSION['generated_tenant_credential'] = [
+            'tenant_uid' => $tenant['tenant_uid'],
+            'admin_email' => $adminEmail,
+            'initial_password' => $initialPassword,
+        ];
 
         Flash::add('success', sprintf('テナント「%s」を作成しました。', (string)($tenant['name'] ?? '')));
         return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
@@ -213,6 +284,11 @@ final class PlatformTenantsController
             Flash::add('error', 'リセット理由を入力してください（200文字以内）。');
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
+        $verifyCheck = $this->verifyTenantAdminIdentity($tenantAdmin, $body);
+        if (!$verifyCheck['ok']) {
+            Flash::add('error', $verifyCheck['message']);
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
         $confirmed = strtolower(trim((string)($body['confirmed'] ?? '')));
         if ($confirmed !== 'yes') {
             Flash::add('error', '確認にチェックしてください。');
@@ -276,6 +352,11 @@ final class PlatformTenantsController
         $rollbackReason = trim((string)($body['rollbackReason'] ?? ''));
         if ($rollbackReason === '' || mb_strlen($rollbackReason, 'UTF-8') > 200) {
             Flash::add('error', '取消理由を入力してください（200文字以内）。');
+            return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+        }
+        $verifyCheck = $this->verifyTenantAdminIdentity($tenantAdmin, $body);
+        if (!$verifyCheck['ok']) {
+            Flash::add('error', $verifyCheck['message']);
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
         $logId = (int)($body['logId'] ?? 0);
@@ -346,7 +427,7 @@ final class PlatformTenantsController
         if (!is_array($sessionUser) || empty($sessionUser['id'])) {
             throw new \RuntimeException('認証が必要です。');
         }
-        if (($sessionUser['role'] ?? null) !== 'admin') {
+        if (!in_array(($sessionUser['role'] ?? null), ['platform_admin', 'admin'], true)) {
             throw new \RuntimeException('権限がありません。');
         }
         if (array_key_exists('tenant_id', $sessionUser) && $sessionUser['tenant_id'] !== null) {
@@ -386,5 +467,173 @@ final class PlatformTenantsController
             $page = 1;
         }
         return max(1, (int)$page);
+    }
+
+    private function generateInitialPassword(int $length = 16): string
+    {
+        $length = max(12, $length);
+        $sets = [
+            'ABCDEFGHJKLMNPQRSTUVWXYZ',
+            'abcdefghijkmnopqrstuvwxyz',
+            '23456789',
+            '!@#$%&*?',
+        ];
+        $chars = [];
+        foreach ($sets as $set) {
+            $chars[] = $set[random_int(0, strlen($set) - 1)];
+        }
+        $all = implode('', $sets);
+        for ($i = count($chars); $i < $length; $i++) {
+            $chars[] = $all[random_int(0, strlen($all) - 1)];
+        }
+        for ($i = count($chars) - 1; $i > 0; $i--) {
+            $j = random_int(0, $i);
+            $tmp = $chars[$i];
+            $chars[$i] = $chars[$j];
+            $chars[$j] = $tmp;
+        }
+        return implode('', $chars);
+    }
+
+    /**
+     * @param array{
+     *   email:string,
+     *   phone_number:?string,
+     *   tenant_contact_email:?string,
+     *   tenant_contact_phone:?string,
+     *   tenant_uid:?string,
+     *   tenant_created_at:?\\DateTimeImmutable
+     * } $tenantAdmin
+     * @param array<string,mixed> $body
+     * @return array{ok:bool,message:string}
+     */
+    private function verifyTenantAdminIdentity(array $tenantAdmin, array $body): array
+    {
+        $matches = 0;
+        $checked = 0;
+
+        $inputEmail = $this->normalizeEmail($body['verifyEmail'] ?? null);
+        if ($inputEmail !== '') {
+            $checked++;
+            $adminEmail = $this->normalizeEmail($tenantAdmin['email'] ?? null);
+            $contactEmail = $this->normalizeEmail($tenantAdmin['tenant_contact_email'] ?? null);
+            if ($inputEmail === $adminEmail || ($contactEmail !== '' && $inputEmail === $contactEmail)) {
+                $matches++;
+            }
+        }
+
+        $inputPhoneLast4 = $this->normalizePhoneLast4($body['verifyPhoneLast4'] ?? null);
+        if ($inputPhoneLast4 !== null) {
+            $checked++;
+            $candidates = [];
+            $adminPhone = $this->normalizePhoneLast4($tenantAdmin['phone_number'] ?? null);
+            $tenantPhone = $this->normalizePhoneLast4($tenantAdmin['tenant_contact_phone'] ?? null);
+            if ($adminPhone !== null) {
+                $candidates[] = $adminPhone;
+            }
+            if ($tenantPhone !== null && $tenantPhone !== $adminPhone) {
+                $candidates[] = $tenantPhone;
+            }
+            if (in_array($inputPhoneLast4, $candidates, true)) {
+                $matches++;
+            }
+        }
+
+        $inputDate = $this->parseRegistrationInput($body['verifyRegisteredAt'] ?? null);
+        if ($inputDate !== null) {
+            $checked++;
+            $createdAt = $tenantAdmin['tenant_created_at'] ?? null;
+            if ($createdAt instanceof \DateTimeImmutable) {
+                $createdLocal = $createdAt->setTimezone(AppTime::timezone());
+                if ($inputDate['hasTime']) {
+                    if ($createdLocal->format('Y-m-d H:i') === $inputDate['date']->format('Y-m-d H:i')) {
+                        $matches++;
+                    }
+                } else {
+                    if ($createdLocal->format('Y-m-d') === $inputDate['date']->format('Y-m-d')) {
+                        $matches++;
+                    }
+                }
+            }
+        }
+
+        $inputTenantUid = trim((string)($body['verifyTenantUid'] ?? ''));
+        if ($inputTenantUid !== '') {
+            $checked++;
+            $tenantUid = trim((string)($tenantAdmin['tenant_uid'] ?? ''));
+            if ($tenantUid !== '' && strcasecmp($tenantUid, $inputTenantUid) === 0) {
+                $matches++;
+            }
+        }
+
+        if ($checked < 2) {
+            return [
+                'ok' => false,
+                'message' => '本人確認情報を2点以上入力してください。',
+            ];
+        }
+        if ($matches < 2) {
+            return [
+                'ok' => false,
+                'message' => '本人確認情報が一致しないため、操作できません。',
+            ];
+        }
+        return [
+            'ok' => true,
+            'message' => '',
+        ];
+    }
+
+    private function normalizeEmail(mixed $value): string
+    {
+        $email = strtolower(trim((string)($value ?? '')));
+        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return '';
+        }
+        return $email;
+    }
+
+    private function normalizePhoneLast4(mixed $value): ?string
+    {
+        $digits = preg_replace('/\\D/', '', (string)($value ?? '')) ?? '';
+        if ($digits === '' || strlen($digits) < 4) {
+            return null;
+        }
+        return substr($digits, -4);
+    }
+
+    /**
+     * @return array{date:\\DateTimeImmutable,hasTime:bool}|null
+     */
+    private function parseRegistrationInput(mixed $value): ?array
+    {
+        $raw = trim((string)($value ?? ''));
+        if ($raw === '') {
+            return null;
+        }
+        $tz = AppTime::timezone();
+        $formats = [
+            'Y-m-d H:i:s',
+            'Y/m/d H:i:s',
+            'Y-m-d H:i',
+            'Y/m/d H:i',
+            'Y-m-d',
+            'Y/m/d',
+        ];
+        foreach ($formats as $format) {
+            $parsed = \DateTimeImmutable::createFromFormat($format, $raw, $tz);
+            if ($parsed === false) {
+                continue;
+            }
+            $errors = \DateTimeImmutable::getLastErrors();
+            if ($errors !== false && ($errors['warning_count'] > 0 || $errors['error_count'] > 0)) {
+                continue;
+            }
+            return [
+                'date' => $parsed,
+                'hasTime' => str_contains($format, 'H'),
+            ];
+        }
+        return null;
     }
 }

@@ -6,6 +6,7 @@ namespace Attendly\Services;
 
 use Attendly\Database\Repository;
 use Attendly\Support\AppTime;
+use Attendly\Support\BreakFeature;
 use DateTimeImmutable;
 use DateTimeZone;
 use RuntimeException;
@@ -33,6 +34,7 @@ final class TimesheetExportService
         if ($tenant === null || ($tenant['status'] ?? '') !== 'active') {
             throw new RuntimeException('テナントが無効です。');
         }
+        $breaksEnabled = BreakFeature::isEnabled();
         $targetTz = AppTime::timezone();
         if (!empty($filters['timezone'])) {
             try {
@@ -61,7 +63,7 @@ final class TimesheetExportService
         $path = $this->exportDir . '/' . $storedFilename;
 
         $breaksBySessionId = [];
-        if ($rows !== []) {
+        if ($breaksEnabled && $rows !== []) {
             $sessionIds = array_map(static fn(array $row): int => (int)($row['id'] ?? 0), $rows);
             $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
             if ($sessionIds !== []) {
@@ -109,6 +111,7 @@ final class TimesheetExportService
     private function writeCsv(string $path, array $rows, array $breaksBySessionId, DateTimeZone $targetTz): void
     {
         $file = new \SplFileObject($path, 'w');
+        $breaksEnabled = BreakFeature::isEnabled();
 
         $headers = [
             'employee_id',
@@ -132,25 +135,36 @@ final class TimesheetExportService
             $end = $row['end_time']?->setTimezone($targetTz);
             $durationMinutes = null;
             $breakMinutes = null;
+            $breakMinutesOutput = null;
             $netMinutes = null;
             $breakShortageMinutes = null;
             $edgeBreakWarning = null;
             if ($row['end_time'] !== null) {
                 $durationMinutes = $this->diffMinutes($row['start_time'], $row['end_time']);
-                $breakMinutes = $this->sumBreakExcludedMinutes(
-                    $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
-                    $row['start_time'],
-                    $row['end_time']
-                );
-                $netMinutes = max(0, $durationMinutes - $breakMinutes);
-                $totalNetMinutes += $netMinutes;
-                $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($netMinutes, $breakMinutes);
-                $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
-                    $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
-                    $row['start_time'],
-                    $row['end_time'],
-                    $edgeMinutes
-                ) ? 1 : 0;
+                if ($breaksEnabled) {
+                    $breakMinutes = $this->sumBreakExcludedMinutes(
+                        $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
+                        $row['start_time'],
+                        $row['end_time']
+                    );
+                    $breakMinutesOutput = $breakMinutes;
+                    $netMinutes = max(0, $durationMinutes - $breakMinutes);
+                    $totalNetMinutes += $netMinutes;
+                    $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($netMinutes, $breakMinutes);
+                    $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
+                        $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
+                        $row['start_time'],
+                        $row['end_time'],
+                        $edgeMinutes
+                    ) ? 1 : 0;
+                } else {
+                    $breakMinutes = 0;
+                    $breakMinutesOutput = '0:00';
+                    $netMinutes = $durationMinutes;
+                    $totalNetMinutes += $netMinutes;
+                    $breakShortageMinutes = 0;
+                    $edgeBreakWarning = 0;
+                }
             }
             $file->fputcsv([
                 $row['user_id'],
@@ -159,7 +173,7 @@ final class TimesheetExportService
                 $row['first_name'],
                 $start->format('Y-m-d H:i:s'),
                 $end?->format('Y-m-d H:i:s'),
-                $breakMinutes,
+                $breakMinutesOutput,
                 $durationMinutes,
                 $netMinutes,
                 $breakShortageMinutes,
@@ -192,40 +206,41 @@ final class TimesheetExportService
         if ($handle === false) {
             throw new RuntimeException('エクスポートファイルを作成できませんでした。');
         }
+        $breaksEnabled = BreakFeature::isEnabled();
 
         $esc = static fn(string $value): string => htmlspecialchars($value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
-        $columnLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
+        $columnLetters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'];
 
-        $headers = ['従業員ID', '姓', '名', 'メール', '開始', '終了', '休憩(分)', '実労働(分)', '時間', '法定休憩不足(分)', '要注意(端寄り)'];
+        $headers = ['従業員ID', '姓', '名', 'メール', '開始', '終了', '休憩(分)', '実労働(分)', '時間'];
         $dataRows = [];
         $totalNetMinutes = 0;
-        $edgeMinutes = BreakComplianceService::edgeBreakWarningMinutes();
         foreach ($rows as $row) {
             $startLocal = $row['start_time']->setTimezone($targetTz);
             $endLocal = $row['end_time']?->setTimezone($targetTz);
             $durationMinutes = null;
             $breakMinutes = null;
+            $breakMinutesOutput = '';
             $netMinutes = null;
             $netFormatted = '';
-            $breakShortageMinutes = null;
-            $edgeBreakWarning = '';
             if ($row['end_time'] !== null) {
                 $durationMinutes = $this->diffMinutes($row['start_time'], $row['end_time']);
-                $breakMinutes = $this->sumBreakExcludedMinutes(
-                    $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
-                    $row['start_time'],
-                    $row['end_time']
-                );
-                $netMinutes = max(0, $durationMinutes - $breakMinutes);
-                $netFormatted = $this->formatMinutesJa($netMinutes);
-                $totalNetMinutes += $netMinutes;
-                $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($netMinutes, $breakMinutes);
-                $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
-                    $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
-                    $row['start_time'],
-                    $row['end_time'],
-                    $edgeMinutes
-                ) ? '要注意' : '';
+                if ($breaksEnabled) {
+                    $breakMinutes = $this->sumBreakExcludedMinutes(
+                        $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
+                        $row['start_time'],
+                        $row['end_time']
+                    );
+                    $breakMinutesOutput = (int)$breakMinutes;
+                    $netMinutes = max(0, $durationMinutes - $breakMinutes);
+                    $netFormatted = $this->formatMinutesJa($netMinutes);
+                    $totalNetMinutes += $netMinutes;
+                } else {
+                    $breakMinutes = 0;
+                    $breakMinutesOutput = '0:00';
+                    $netMinutes = $durationMinutes;
+                    $netFormatted = $this->formatMinutesJa($netMinutes);
+                    $totalNetMinutes += $netMinutes;
+                }
             }
 
             $dataRows[] = [
@@ -235,11 +250,9 @@ final class TimesheetExportService
                 (string)$row['email'],
                 $startLocal->format('Y-m-d H:i'),
                 $endLocal?->format('Y-m-d H:i') ?? '記録中',
-                $breakMinutes !== null ? (int)$breakMinutes : '',
+                $breakMinutesOutput,
                 $netMinutes !== null ? (int)$netMinutes : '',
                 $netFormatted,
-                $breakShortageMinutes !== null ? (int)$breakShortageMinutes : '',
-                $edgeBreakWarning,
             ];
         }
 
@@ -253,8 +266,6 @@ final class TimesheetExportService
             '',
             (int)$totalNetMinutes,
             $this->formatMinutesJa($totalNetMinutes),
-            '',
-            '',
         ];
 
         $lastColumn = $columnLetters[count($columnLetters) - 1];
@@ -433,7 +444,8 @@ final class TimesheetExportService
         $pdf->Ln(2);
 
         $esc = static fn(string $value): string => htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
-        $headers = ['従業員ID', '姓', '名', 'メール', '開始', '終了', '休憩(分)', '実労働(分)', '時間', '法定休憩不足(分)', '要注意(端寄り)'];
+        $headers = ['従業員ID', '姓', '名', 'メール', '開始', '終了', '休憩(分)', '実労働(分)', '時間'];
+        $breaksEnabled = BreakFeature::isEnabled();
 
         $html = '<table border="1" cellpadding="3" cellspacing="0"><thead><tr>';
         foreach ($headers as $h) {
@@ -442,34 +454,32 @@ final class TimesheetExportService
         $html .= '</tr></thead><tbody>';
 
         $totalNetMinutes = 0;
-        $edgeMinutes = BreakComplianceService::edgeBreakWarningMinutes();
         foreach ($rows as $row) {
             $startLocal = $row['start_time']->setTimezone($targetTz);
             $endLocal = $row['end_time']?->setTimezone($targetTz);
-            $breakMinutes = '';
+            $breakMinutesOutput = '';
             $netMinutes = '';
             $netFormatted = '';
-            $breakShortageMinutes = '';
-            $edgeBreakWarning = '';
             if ($row['end_time'] !== null) {
                 $durationMinutes = $this->diffMinutes($row['start_time'], $row['end_time']);
-                $break = $this->sumBreakExcludedMinutes(
-                    $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
-                    $row['start_time'],
-                    $row['end_time']
-                );
-                $net = max(0, $durationMinutes - $break);
-                $breakMinutes = (string)$break;
-                $netMinutes = (string)$net;
-                $netFormatted = $this->formatMinutesJa($net);
-                $totalNetMinutes += $net;
-                $breakShortageMinutes = (string)BreakComplianceService::breakShortageMinutes($net, $break);
-                $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
-                    $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
-                    $row['start_time'],
-                    $row['end_time'],
-                    $edgeMinutes
-                ) ? '要注意' : '';
+                if ($breaksEnabled) {
+                    $break = $this->sumBreakExcludedMinutes(
+                        $breaksBySessionId[(int)($row['id'] ?? 0)] ?? [],
+                        $row['start_time'],
+                        $row['end_time']
+                    );
+                    $net = max(0, $durationMinutes - $break);
+                    $breakMinutesOutput = (string)$break;
+                    $netMinutes = (string)$net;
+                    $netFormatted = $this->formatMinutesJa($net);
+                    $totalNetMinutes += $net;
+                } else {
+                    $breakMinutesOutput = '0:00';
+                    $net = $durationMinutes;
+                    $netMinutes = (string)$net;
+                    $netFormatted = $this->formatMinutesJa($net);
+                    $totalNetMinutes += $net;
+                }
             }
 
             $html .= '<tr>';
@@ -479,11 +489,9 @@ final class TimesheetExportService
             $html .= '<td>' . $esc((string)$row['email']) . '</td>';
             $html .= '<td>' . $esc($startLocal->format('Y-m-d H:i')) . '</td>';
             $html .= '<td>' . $esc($endLocal?->format('Y-m-d H:i') ?? '記録中') . '</td>';
-            $html .= '<td>' . $esc($breakMinutes) . '</td>';
+            $html .= '<td>' . $esc($breakMinutesOutput) . '</td>';
             $html .= '<td>' . $esc($netMinutes) . '</td>';
             $html .= '<td>' . $esc($netFormatted) . '</td>';
-            $html .= '<td>' . $esc($breakShortageMinutes) . '</td>';
-            $html .= '<td>' . $esc($edgeBreakWarning) . '</td>';
             $html .= '</tr>';
         }
 

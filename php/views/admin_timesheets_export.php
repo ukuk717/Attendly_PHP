@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>勤怠エクスポート</h2>
-  <p class="form-note">期間と従業員を指定して勤怠データを Excel（.xlsx） / PDF でダウンロードします。</p>
+  <p class="form-note">期間と従業員を指定して勤怠データを署名URL経由でダウンロードします。</p>
 </div>
 
 <section class="card">
@@ -43,6 +43,6 @@
         <option value="pdf">PDF</option>
       </select>
     </div>
-    <button type="submit" class="btn primary">ダウンロード</button>
+    <button type="submit" class="btn primary">署名URLでダウンロード</button>
   </form>
 </section>

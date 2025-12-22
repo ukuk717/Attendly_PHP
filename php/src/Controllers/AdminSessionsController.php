@@ -8,6 +8,7 @@ use Attendly\Database\Repository;
 use Attendly\Security\CsrfToken;
 use Attendly\Services\BreakComplianceService;
 use Attendly\Support\AppTime;
+use Attendly\Support\BreakFeature;
 use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
@@ -21,10 +22,12 @@ final class AdminSessionsController
     private const YEAR_RANGE_MESSAGE = '2000年から2100年までの日時を入力してください。';
 
     private Repository $repository;
+    private bool $breaksEnabled;
 
     public function __construct(private View $view, ?Repository $repository = null)
     {
         $this->repository = $repository ?? new Repository();
+        $this->breaksEnabled = BreakFeature::isEnabled();
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
@@ -63,27 +66,39 @@ final class AdminSessionsController
         $breaksBySessionId = $this->fetchBreaksBySessionId($records);
         $this->setBreaksBySessionIdCache($breaksBySessionId);
         $edgeMinutes = BreakComplianceService::edgeBreakWarningMinutes();
-        $sessions = array_map(function (array $session) use ($edgeMinutes): array {
+        $breaksEnabled = $this->breaksEnabled;
+        $sessions = array_map(function (array $session) use ($edgeMinutes, $breaksEnabled): array {
             $durationMinutes = null;
             $breakMinutesValue = null;
+            $breakMinutesDisplay = '--';
             $breakShortageMinutes = 0;
             $edgeBreakWarning = false;
             if ($session['end_time'] !== null) {
                 $sessionBreaks = $this->breaksForSession((int)$session['id']);
                 $grossMinutes = $this->diffMinutes($session['start_time'], $session['end_time']);
-                $breakMinutesValue = $this->sumBreakExcludedMinutes(
-                    $sessionBreaks,
-                    $session['start_time'],
-                    $session['end_time']
-                );
-                $durationMinutes = max(0, $grossMinutes - $breakMinutesValue);
-                $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($durationMinutes, $breakMinutesValue);
-                $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
-                    $sessionBreaks,
-                    $session['start_time'],
-                    $session['end_time'],
-                    $edgeMinutes
-                );
+                if ($breaksEnabled) {
+                    $breakMinutesValue = $this->sumBreakExcludedMinutes(
+                        $sessionBreaks,
+                        $session['start_time'],
+                        $session['end_time']
+                    );
+                    $breakMinutesDisplay = $breakMinutesValue . '分';
+                    $durationMinutes = max(0, $grossMinutes - $breakMinutesValue);
+                    $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($durationMinutes, $breakMinutesValue);
+                    $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
+                        $sessionBreaks,
+                        $session['start_time'],
+                        $session['end_time'],
+                        $edgeMinutes
+                    );
+                } else {
+                    $breakMinutesValue = 0;
+                    $breakMinutesDisplay = '0:00';
+                    $durationMinutes = $grossMinutes;
+                }
+            } elseif (!$breaksEnabled) {
+                $breakMinutesValue = 0;
+                $breakMinutesDisplay = '0:00';
             }
             return [
                 'id' => $session['id'],
@@ -93,6 +108,7 @@ final class AdminSessionsController
                 'endDisplay' => $session['end_time']?->setTimezone(AppTime::timezone())->format('Y-m-d H:i') ?? '記録中',
                 'formattedMinutes' => $durationMinutes !== null ? $this->formatMinutesToHM($durationMinutes) : '--',
                 'breakMinutes' => $breakMinutesValue,
+                'breakMinutesDisplay' => $breakMinutesDisplay,
                 'breakShortageMinutes' => $breakShortageMinutes,
                 'edgeBreakWarning' => $edgeBreakWarning,
             ];
@@ -121,6 +137,7 @@ final class AdminSessionsController
             'targetMonth' => $targetMonth,
             'monthlySummary' => $monthlySummary,
             'queryString' => $queryString,
+            'breaksEnabled' => $breaksEnabled,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -384,17 +401,25 @@ final class AdminSessionsController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
+        if ($user === null) {
             throw new \RuntimeException('権限がありません。');
         }
-        if ($user['tenant_id'] === null) {
+        $tenantId = $user['tenant_id'] !== null ? (int)$user['tenant_id'] : null;
+        $role = $user['role'] ?? null;
+        if ($role === 'admin' && $tenantId !== null) {
+            $role = 'tenant_admin';
+        }
+        if ($role !== 'tenant_admin') {
+            throw new \RuntimeException('権限がありません。');
+        }
+        if ($tenantId === null) {
             throw new \RuntimeException('テナントに所属していません。');
         }
         return [
             'id' => $user['id'],
-            'tenant_id' => (int)$user['tenant_id'],
+            'tenant_id' => $tenantId,
             'email' => $user['email'],
-            'role' => $user['role'],
+            'role' => $role,
         ];
     }
 
@@ -468,11 +493,13 @@ final class AdminSessionsController
                 continue;
             }
             $grossMinutes = (int)floor(($boundedEnd->getTimestamp() - $boundedStart->getTimestamp()) / 60);
-            $breakMinutes = $this->sumBreakExcludedMinutes(
-                $breaksBySessionId[(int)($session['id'] ?? 0)] ?? [],
-                $boundedStart,
-                $boundedEnd
-            );
+            $breakMinutes = $this->breaksEnabled
+                ? $this->sumBreakExcludedMinutes(
+                    $breaksBySessionId[(int)($session['id'] ?? 0)] ?? [],
+                    $boundedStart,
+                    $boundedEnd
+                )
+                : 0;
             $minutes += max(0, $grossMinutes - $breakMinutes);
         }
         return $minutes;
@@ -507,6 +534,9 @@ final class AdminSessionsController
     private function fetchBreaksBySessionId(array $sessions): array
     {
         $breaksBySessionId = [];
+        if (!$this->breaksEnabled) {
+            return $breaksBySessionId;
+        }
         if ($sessions === []) {
             return $breaksBySessionId;
         }

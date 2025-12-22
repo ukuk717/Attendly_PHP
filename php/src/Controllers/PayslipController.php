@@ -41,8 +41,8 @@ final class PayslipController
             }
             $netAmount = (float)$data['net_amount'];
         }
-        if ($employeeId <= 0 || $summary === '' || $sentOnStr === '') {
-            return $this->error($response, 400, 'employee_id, summary, sent_on are required');
+        if ($employeeId <= 0 || $sentOnStr === '') {
+            return $this->error($response, 400, 'employee_id and sent_on are required');
         }
         $sentOn = AppTime::parseDate($sentOnStr);
         if ($sentOn === null) {
@@ -61,7 +61,11 @@ final class PayslipController
         } catch (\Throwable $e) {
             return $this->error($response, 400, 'send_failed');
         }
-        $response->getBody()->write(json_encode(['ok' => true, 'id' => $result['id']], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        $response->getBody()->write(json_encode([
+            'ok' => true,
+            'id' => $result['id'],
+            'signed_url' => $result['signed_url'] ?? null,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
         return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
     }
 
@@ -114,8 +118,8 @@ final class PayslipController
             }
             $netAmount = (float)$data['net_amount'];
         }
-        if ($employeeId <= 0 || $summary === '' || $sentOnStr === '') {
-            Flash::add('error', '従業員・支給日・概要は必須です。');
+        if ($employeeId <= 0 || $sentOnStr === '') {
+            Flash::add('error', '従業員と支給日は必須です。');
             return $response->withStatus(303)->withHeader('Location', '/admin/payslips/send');
         }
         $sentOn = AppTime::parseDate($sentOnStr);
@@ -157,17 +161,25 @@ final class PayslipController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
+        if ($user === null) {
             throw new \RuntimeException('権限がありません。');
         }
-        if ($user['tenant_id'] === null) {
+        $tenantId = $user['tenant_id'] !== null ? (int)$user['tenant_id'] : null;
+        $role = $user['role'] ?? null;
+        if ($role === 'admin' && $tenantId !== null) {
+            $role = 'tenant_admin';
+        }
+        if ($role !== 'tenant_admin') {
+            throw new \RuntimeException('権限がありません。');
+        }
+        if ($tenantId === null) {
             throw new \RuntimeException('テナントに所属していません。');
         }
         return [
             'id' => $user['id'],
-            'tenant_id' => (int)$user['tenant_id'],
+            'tenant_id' => $tenantId,
             'email' => $user['email'],
-            'role' => $user['role'],
+            'role' => $role,
         ];
     }
 

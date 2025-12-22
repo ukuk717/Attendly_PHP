@@ -39,15 +39,49 @@ use Attendly\Controllers\AdminSessionsController;
 use Attendly\Controllers\AdminSessionBreaksController;
 use Attendly\Controllers\AdminTenantSettingsController;
 use Attendly\Controllers\PlatformTenantsController;
+use Attendly\Controllers\SignedDownloadController;
 use Attendly\Support\AppTime;
 use Attendly\Security\RequirePlatformMiddleware;
+use Slim\Exception\HttpNotFoundException;
 
 function create_app(): \Slim\App
 {
     $app = AppFactory::create();
 
     $displayErrorDetails = filter_var($_ENV['APP_DEBUG'] ?? false, FILTER_VALIDATE_BOOL);
-    $app->addErrorMiddleware($displayErrorDetails, true, true);
+    $errorMiddleware = $app->addErrorMiddleware($displayErrorDetails, true, true);
+    $errorMiddleware->setErrorHandler(HttpNotFoundException::class, function (
+        ServerRequestInterface $request,
+        \Throwable $exception,
+        bool $displayErrorDetails,
+        bool $logErrors,
+        bool $logErrorDetails
+    ) use ($app): ResponseInterface {
+        $path = $request->getUri()->getPath();
+        $method = strtoupper($request->getMethod());
+        $quietPaths = [
+            '/favicon.ico',
+            '/apple-touch-icon.png',
+            '/apple-touch-icon-precomposed.png',
+            '/site.webmanifest',
+            '/manifest.json',
+            '/robots.txt',
+        ];
+        if (in_array($path, $quietPaths, true)) {
+            return $app->getResponseFactory()->createResponse(204);
+        }
+
+        error_log(sprintf('[http] 404 %s %s', $method, $path));
+        $response = $app->getResponseFactory()->createResponse(404);
+        $accept = strtolower($request->getHeaderLine('Accept'));
+        $expectsJson = str_contains($accept, 'application/json') || str_contains($accept, 'text/json');
+        if ($expectsJson) {
+            $response->getBody()->write('{"error":"not_found"}');
+            return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
+        }
+        $response->getBody()->write('Not Found');
+        return $response->withHeader('Content-Type', 'text/plain; charset=utf-8');
+    });
 
     $allowedHosts = [];
     if (!empty($_ENV['ALLOWED_HOSTS'])) {
@@ -148,6 +182,10 @@ function create_app(): \Slim\App
     $app->post('/passkeys/registration/verify', [$passkeyController, 'registrationVerify'])->add(new RequireAuthMiddleware());
     $app->post('/passkeys/{id}/delete', [$passkeyController, 'delete'])->add(new RequireAuthMiddleware());
 
+    // Signed downloads
+    $signedDownloads = new SignedDownloadController();
+    $app->get('/downloads/{token}', [$signedDownloads, 'download']);
+
     // MFA (メールOTP)
     $mfaLoginController = new MfaLoginController($view);
     $app->get('/login/mfa', [$mfaLoginController, 'show']);
@@ -160,7 +198,7 @@ function create_app(): \Slim\App
     $app->get('/register', [$registerController, 'show']);
     $app->post('/register', [$registerController, 'register']);
 
-    // Password reset (request only; full flow TBD)
+    // Password reset
     $passwordReset = new PasswordResetController($view);
     $app->get('/password/reset', [$passwordReset, 'showRequest']);
     $app->post('/password/reset', [$passwordReset, 'request']);
@@ -210,6 +248,9 @@ function create_app(): \Slim\App
     // Admin employee management / sessions / tenant settings
     $adminEmployees = new AdminEmployeesController();
     $app->post('/admin/employees/{userId}/status', [$adminEmployees, 'updateStatus'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
+    $app->map(['GET', 'HEAD'], '/admin/employees/{userId}/mfa/reset', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        return $response->withStatus(303)->withHeader('Location', '/dashboard');
+    })->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/employees/{userId}/mfa/reset', [$adminEmployees, 'resetMfa'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/admin/employees/{userId}/employment-type', [$adminEmployees, 'updateEmploymentType'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
@@ -236,7 +277,13 @@ function create_app(): \Slim\App
     $app->get('/platform/tenants', [$platformTenants, 'show'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenants/create', [$platformTenants, 'createTenant'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenants/{tenantId}/status', [$platformTenants, 'updateTenantStatus'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->map(['GET', 'HEAD'], '/platform/tenant-admins/{userId}/mfa/reset', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+    })->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenant-admins/{userId}/mfa/reset', [$platformTenants, 'resetTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->map(['GET', 'HEAD'], '/platform/tenant-admins/{userId}/mfa/rollback', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+        return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
+    })->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenant-admins/{userId}/mfa/rollback', [$platformTenants, 'rollbackTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
 
     $app->get('/dashboard', [$dashboard, 'show'])->add(new RequireAuthMiddleware());
@@ -255,6 +302,7 @@ function create_app(): \Slim\App
     $app->post('/account/password', [$account, 'changePassword'])->add(new RequireAuthMiddleware());
     $app->post('/account/email/request', [$account, 'requestEmailChange'])->add(new RequireAuthMiddleware());
     $app->post('/account/email/verify', [$account, 'verifyEmailChange'])->add(new RequireAuthMiddleware());
+    $app->post('/account/sessions/{id}/revoke', [$account, 'revokeSession'])->add(new RequireAuthMiddleware());
 
     $mfaSettings = new MfaSettingsController($view);
     $app->get('/settings/mfa', [$mfaSettings, 'show'])->add(new RequireAuthMiddleware());

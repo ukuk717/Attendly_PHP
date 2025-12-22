@@ -12,6 +12,7 @@ use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
 use Attendly\Support\PasswordHasher;
 use Attendly\Support\PasswordPolicy;
+use Attendly\Support\PlatformPasswordPolicy;
 use Attendly\Support\RateLimiter;
 use Attendly\Support\SessionAuth;
 use Attendly\View;
@@ -97,12 +98,37 @@ final class AccountController
             Flash::add('error', 'パスキー情報を取得できませんでした。');
         }
 
+        $loginSessions = [];
+        $currentSessionId = $this->getCurrentLoginSessionId($user['id']);
+        try {
+            $rows = $this->repository->listLoginSessionsByUser($user['id'], 20);
+            foreach ($rows as $row) {
+                $loginAt = $row['login_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i');
+                $revokedAt = $row['revoked_at'] instanceof \DateTimeImmutable
+                    ? $row['revoked_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
+                    : null;
+                $loginSessions[] = [
+                    'id' => $row['id'],
+                    'login_at' => $loginAt,
+                    'user_agent' => $row['user_agent'] ?? null,
+                    'revoked_at' => $revokedAt,
+                    'is_current' => $currentSessionId !== null && (int)$row['id'] === $currentSessionId,
+                ];
+            }
+        } catch (\PDOException $e) {
+            if ($e->getCode() !== '42S02') {
+                throw $e;
+            }
+        }
+
         $html = $this->view->renderWithLayout('account_settings', [
             'title' => 'アカウント設定',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'currentPath' => $request->getUri()->getPath(),
             'profile' => $profile,
+            'userEmail' => $user['email'],
             'minPasswordLength' => $this->minPasswordLength,
             'maxPasswordLength' => $this->maxPasswordLength,
             'otpLength' => $this->otpLength,
@@ -110,9 +136,64 @@ final class AccountController
             'pendingEmailExpiresAt' => $emailState['expiresAtDisplay'],
             'pendingEmailLocked' => $emailState['isLocked'],
             'passkeys' => $passkeys,
+            'loginSessions' => $loginSessions,
+            'isPlatformAdmin' => ($user['role'] ?? null) === 'platform_admin',
+            'platformMinPasswordLength' => max($this->minPasswordLength, 12),
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
+    }
+
+    public function revokeSession(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
+    {
+        $user = $this->getCurrentUser($request);
+        if ($user === null) {
+            return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        $data = (array)$request->getParsedBody();
+        if (!CsrfToken::verify((string)($data['csrf_token'] ?? ''))) {
+            Flash::add('error', '無効なリクエストです。もう一度お試しください。');
+            return $response->withStatus(303)->withHeader('Location', '/account');
+        }
+        $sessionId = isset($args['id']) ? (int)$args['id'] : 0;
+        if ($sessionId <= 0) {
+            Flash::add('error', '対象のセッションが見つかりません。');
+            return $response->withStatus(303)->withHeader('Location', '/account');
+        }
+
+        $now = AppTime::now();
+        try {
+            $revoked = $this->repository->revokeLoginSessionById($user['id'], $sessionId, $now);
+        } catch (\PDOException $e) {
+            if ($e->getCode() !== '42S02') {
+                throw $e;
+            }
+            Flash::add('error', 'セッション管理が利用できません。');
+            return $response->withStatus(303)->withHeader('Location', '/account');
+        }
+
+        if (!$revoked) {
+            Flash::add('error', '対象のセッションが見つからないか、既に失効しています。');
+            return $response->withStatus(303)->withHeader('Location', '/account');
+        }
+
+        $currentSessionId = $this->getCurrentLoginSessionId($user['id']);
+        if ($currentSessionId !== null && $currentSessionId === $sessionId) {
+            try {
+                $this->repository->deleteUserActiveSession($user['id']);
+            } catch (\Throwable) {
+                // ignore cleanup failure
+            }
+            SessionAuth::clear();
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_regenerate_id(true);
+            }
+            Flash::add('success', 'この端末をログアウトしました。');
+            return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+
+        Flash::add('success', 'セッションを失効しました。');
+        return $response->withStatus(303)->withHeader('Location', '/account');
     }
 
     public function updateProfile(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -185,6 +266,15 @@ final class AccountController
         if (!$policyResult['ok']) {
             $errors = array_merge($errors, $policyResult['errors']);
         }
+        if (($user['role'] ?? null) === 'platform_admin') {
+            if (!$this->passwordHasher->hasPepper()) {
+                $errors[] = 'プラットフォーム管理者のパスワード更新には PASSWORD_PEPPER の設定が必要です。';
+            }
+            $platformPolicy = PlatformPasswordPolicy::validate($newPassword);
+            if (!$platformPolicy['ok']) {
+                $errors = array_merge($errors, $platformPolicy['errors']);
+            }
+        }
         if (!empty($errors)) {
             foreach ($errors as $err) {
                 Flash::add('error', $err);
@@ -221,6 +311,7 @@ final class AccountController
             $this->repository->deleteTrustedDevicesByUser($user['id']);
             $this->emailOtpService->deleteByUserAndPurpose($user['id'], 'email_change');
             SessionAuth::clearPendingEmailChange();
+            SessionAuth::clearForcePasswordChange();
         } catch (\Throwable $e) {
             Flash::add('error', 'パスワードの更新に失敗しました。時間をおいて再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/account');
@@ -431,5 +522,25 @@ final class AccountController
             return $default;
         }
         return max($min, min($max, (int)$intVal));
+    }
+
+    private function getCurrentLoginSessionId(int $userId): ?int
+    {
+        $sessionKey = SessionAuth::getSessionKey();
+        if ($sessionKey === null || $sessionKey === '') {
+            return null;
+        }
+        try {
+            $record = $this->repository->findLoginSessionByHash(hash('sha256', $sessionKey));
+        } catch (\PDOException $e) {
+            if ($e->getCode() !== '42S02') {
+                throw $e;
+            }
+            return null;
+        }
+        if ($record === null || (int)$record['user_id'] !== $userId) {
+            return null;
+        }
+        return (int)$record['id'];
     }
 }

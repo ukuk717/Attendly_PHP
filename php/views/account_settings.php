@@ -21,20 +21,39 @@
 
 <section class="card">
   <h3>パスワード変更</h3>
-  <p class="form-note">現在のパスワードを確認し、新しいパスワードを設定します。<?= $e((string)($minPasswordLength ?? 8)) ?> 文字以上で入力してください。</p>
+  <?php if (!empty($isPlatformAdmin)): ?>
+    <p class="form-note">現在のパスワードを確認し、新しいパスワードを設定します。<?= $e((string)($platformMinPasswordLength ?? 12)) ?> 文字以上で、英字（大文字・小文字）・数字・記号を必ず含めてください。</p>
+  <?php else: ?>
+    <p class="form-note">現在のパスワードを確認し、新しいパスワードを設定します。<?= $e((string)($minPasswordLength ?? 8)) ?> 文字以上で入力してください。</p>
+  <?php endif; ?>
   <form method="post" action="/account/password" class="form">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+    <input type="text" name="username" autocomplete="username" value="<?= $e((string)($userEmail ?? '')) ?>" class="visually-hidden" aria-hidden="true" tabindex="-1">
     <label class="form-field">
       <span>現在のパスワード</span>
       <input type="password" name="currentPassword" autocomplete="current-password" maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>" required>
     </label>
     <label class="form-field">
       <span>新しいパスワード</span>
-      <input type="password" name="newPassword" autocomplete="new-password" minlength="<?= $e((string)($minPasswordLength ?? 8)) ?>" maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>" required>
+      <input
+        type="password"
+        name="newPassword"
+        autocomplete="new-password"
+        minlength="<?= $e((string)(!empty($isPlatformAdmin) ? ($platformMinPasswordLength ?? 12) : ($minPasswordLength ?? 8))) ?>"
+        maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>"
+        required
+      >
     </label>
     <label class="form-field">
       <span>新しいパスワード（確認）</span>
-      <input type="password" name="newPasswordConfirmation" autocomplete="new-password" minlength="<?= $e((string)($minPasswordLength ?? 8)) ?>" maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>" required>
+      <input
+        type="password"
+        name="newPasswordConfirmation"
+        autocomplete="new-password"
+        minlength="<?= $e((string)(!empty($isPlatformAdmin) ? ($platformMinPasswordLength ?? 12) : ($minPasswordLength ?? 8))) ?>"
+        maxlength="<?= $e((string)($maxPasswordLength ?? 256)) ?>"
+        required
+      >
     </label>
     <button type="submit" class="btn primary">パスワードを変更</button>
   </form>
@@ -79,6 +98,55 @@
         </li>
       <?php endforeach; ?>
     </ul>
+  <?php endif; ?>
+</section>
+
+<section class="card">
+  <h3>ログインセッション</h3>
+  <p class="form-note">ログイン端末と日時を確認できます（IPは表示せず、サーバーログに記録されます）。</p>
+  <?php if (empty($loginSessions ?? [])): ?>
+    <p class="form-note">セッション情報がありません。</p>
+  <?php else: ?>
+    <div class="table-responsive">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>ログイン日時</th>
+            <th>端末</th>
+            <th>状態</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($loginSessions as $session): ?>
+            <?php
+              $isCurrent = !empty($session['is_current']);
+              $isRevoked = !empty($session['revoked_at']);
+              $status = $isCurrent ? '現在の端末' : ($isRevoked ? '失効済み' : '有効');
+              $ua = trim((string)($session['user_agent'] ?? ''));
+              if ($ua === '') {
+                  $ua = '不明';
+              }
+            ?>
+            <tr>
+              <td><?= $e((string)($session['login_at'] ?? '')) ?></td>
+              <td><?= $e($ua) ?></td>
+              <td><?= $e($status) ?></td>
+              <td>
+                <?php if (!$isCurrent && !$isRevoked): ?>
+                  <form method="post" action="/account/sessions/<?= $e((string)($session['id'] ?? 0)) ?>/revoke" class="form-inline">
+                    <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                    <button type="submit" class="btn secondary" onclick="return confirm('このセッションを失効しますか？');">失効</button>
+                  </form>
+                <?php else: ?>
+                  <span class="muted">-</span>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+    </div>
   <?php endif; ?>
 </section>
 

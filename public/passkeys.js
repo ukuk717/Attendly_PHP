@@ -3,6 +3,7 @@
   const isSecureContext = window.isSecureContext === true;
   const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const secureAllowed = isSecureContext || isLocalhost;
+  const PASSKEY_TIMEOUT_MS = 15000;
 
   const statusEls = document.querySelectorAll('[data-passkey-status]');
   const setStatus = (message, type = '') => {
@@ -128,6 +129,22 @@
     return 'パスキーの処理に失敗しました。';
   };
 
+  const createPasskeyTimeout = (onTimeout) => {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = window.setTimeout(() => {
+      if (controller) {
+        controller.abort();
+      }
+      onTimeout();
+    }, PASSKEY_TIMEOUT_MS);
+    return {
+      controller,
+      clear: () => {
+        window.clearTimeout(timer);
+      },
+    };
+  };
+
   const loginButton = document.querySelector('[data-passkey-login]');
   if (loginButton) {
     if (!supportsPasskey || !secureAllowed) {
@@ -140,20 +157,37 @@
       loginButton.addEventListener('click', async () => {
         setStatus('パスキーを呼び出しています…');
         loginButton.disabled = true;
+        let finished = false;
+        let timeout = null;
+        const finish = (message, type = 'error') => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          if (timeout) {
+            timeout.clear();
+          }
+          loginButton.disabled = false;
+          setStatus(message, type);
+        };
+        timeout = createPasskeyTimeout(() => {
+          finish('パスキーの処理がタイムアウトしました。もう一度お試しください。', 'error');
+        });
         try {
           const emailInput = document.querySelector('#email');
           const email = emailInput && emailInput.value ? emailInput.value.trim() : '';
           const optionsResponse = await postJson('/passkeys/login/options', { email });
           if (!optionsResponse.ok || !optionsResponse.publicKey) {
-            setStatus(formatError(optionsResponse.error), 'error');
-            loginButton.disabled = false;
+            finish(formatError(optionsResponse.error), 'error');
             return;
           }
           const publicKey = normalizePublicKey(optionsResponse.publicKey);
-          const credential = await navigator.credentials.get({ publicKey });
+          const credential = await navigator.credentials.get({
+            publicKey,
+            ...(timeout.controller ? { signal: timeout.controller.signal } : {}),
+          });
           if (!credential) {
-            setStatus('パスキーの取得に失敗しました。', 'error');
-            loginButton.disabled = false;
+            finish('パスキーの取得に失敗しました。', 'error');
             return;
           }
           const payload = {
@@ -169,15 +203,18 @@
           };
           const verifyResponse = await postJson('/passkeys/login/verify', payload);
           if (!verifyResponse.ok) {
-            setStatus(formatError(verifyResponse.error), 'error');
-            loginButton.disabled = false;
+            finish(formatError(verifyResponse.error), 'error');
             return;
           }
+          timeout.clear();
           const redirect = verifyResponse.redirect || '/dashboard';
           window.location.assign(redirect);
         } catch (err) {
-          setStatus(formatClientError(err), 'error');
-          loginButton.disabled = false;
+          if (err && err.name === 'AbortError') {
+            finish('パスキーの処理がタイムアウトしました。もう一度お試しください。', 'error');
+            return;
+          }
+          finish(formatClientError(err), 'error');
         }
       });
     }
@@ -195,22 +232,40 @@
       registerButton.addEventListener('click', async () => {
         setStatus('パスキーを登録しています…');
         registerButton.disabled = true;
+        let finished = false;
+        let timeout = null;
+        const finish = (message, type = 'error') => {
+          if (finished) {
+            return;
+          }
+          finished = true;
+          if (timeout) {
+            timeout.clear();
+          }
+          registerButton.disabled = false;
+          setStatus(message, type);
+        };
+        timeout = createPasskeyTimeout(() => {
+          finish('パスキーの処理がタイムアウトしました。もう一度お試しください。', 'error');
+        });
         try {
           const optionsResponse = await postJson('/passkeys/registration/options');
           if (!optionsResponse.ok || !optionsResponse.publicKey) {
             if (optionsResponse.error === 'reauth_required') {
+              timeout.clear();
               window.location.assign('/login');
               return;
             }
-            setStatus(formatError(optionsResponse.error), 'error');
-            registerButton.disabled = false;
+            finish(formatError(optionsResponse.error), 'error');
             return;
           }
           const publicKey = normalizePublicKey(optionsResponse.publicKey);
-          const credential = await navigator.credentials.create({ publicKey });
+          const credential = await navigator.credentials.create({
+            publicKey,
+            ...(timeout.controller ? { signal: timeout.controller.signal } : {}),
+          });
           if (!credential) {
-            setStatus('パスキーの登録に失敗しました。', 'error');
-            registerButton.disabled = false;
+            finish('パスキーの登録に失敗しました。', 'error');
             return;
           }
           const labelInput = document.querySelector('#passkey-label');
@@ -233,17 +288,21 @@
           const verifyResponse = await postJson('/passkeys/registration/verify', payload);
           if (!verifyResponse.ok) {
             if (verifyResponse.error === 'reauth_required') {
+              timeout.clear();
               window.location.assign('/login');
               return;
             }
-            setStatus(formatError(verifyResponse.error), 'error');
-            registerButton.disabled = false;
+            finish(formatError(verifyResponse.error), 'error');
             return;
           }
+          timeout.clear();
           window.location.reload();
         } catch (err) {
-          setStatus(formatClientError(err), 'error');
-          registerButton.disabled = false;
+          if (err && err.name === 'AbortError') {
+            finish('パスキーの処理がタイムアウトしました。もう一度お試しください。', 'error');
+            return;
+          }
+          finish(formatClientError(err), 'error');
         }
       });
     }

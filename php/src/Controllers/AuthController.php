@@ -8,6 +8,8 @@ use Attendly\Security\CsrfToken;
 use Attendly\Support\AppTime;
 use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
+use Attendly\Support\PasswordHasher;
+use Attendly\Support\PlatformPasswordPolicy;
 use Attendly\Support\SessionAuth;
 use Attendly\Database\Repository;
 use Attendly\View;
@@ -83,19 +85,48 @@ final class AuthController
         }
 
         if ($result['user']) {
-            $allowedRoles = ['admin', 'tenant_admin', 'employee'];
-            $role = $result['user']['role'] ?? null;
-            if ($role !== null && !in_array($role, $allowedRoles, true)) {
-                Flash::add('error', '無効なロールが検出されました。');
-                return $response->withStatus(303)->withHeader('Location', '/login');
-            }
             $tenantId = $result['user']['tenant_id'] ?? null;
             if ($tenantId !== null && !is_int($tenantId)) {
                 Flash::add('error', 'テナント情報が不正です。');
                 return $response->withStatus(303)->withHeader('Location', '/login');
             }
+            $role = $result['user']['role'] ?? null;
+            if ($role === 'admin') {
+                $role = $tenantId === null ? 'platform_admin' : 'tenant_admin';
+                $result['user']['role'] = $role;
+            }
+            $allowedRoles = ['platform_admin', 'tenant_admin', 'employee'];
+            if ($role !== null && !in_array($role, $allowedRoles, true)) {
+                Flash::add('error', '無効なロールが検出されました。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
+            if ($role === 'platform_admin' && $tenantId !== null) {
+                Flash::add('error', 'ロール設定が不正です。管理者へお問い合わせください。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
+            if ($role === 'tenant_admin' && $tenantId === null) {
+                Flash::add('error', 'ロール設定が不正です。管理者へお問い合わせください。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
+            $forcePasswordChange = false;
+            if ($role === 'platform_admin') {
+                $hasher = new PasswordHasher();
+                if (!$hasher->hasPepper()) {
+                    Flash::add('error', 'プラットフォーム管理者は PASSWORD_PEPPER の設定が必須です。管理者へお問い合わせください。');
+                    return $response->withStatus(303)->withHeader('Location', '/login');
+                }
+                $platformPolicy = PlatformPasswordPolicy::validate($password);
+                if (!$platformPolicy['ok']) {
+                    $forcePasswordChange = true;
+                }
+            }
             $trustedResponse = $this->maybeLoginWithTrustedDevice($request, $response, $result['user']);
             if ($trustedResponse !== null) {
+                SessionAuth::setForcePasswordChange($forcePasswordChange);
+                if ($forcePasswordChange) {
+                    Flash::add('error', 'プラットフォーム管理者のパスワードを更新してください。');
+                    return $trustedResponse->withHeader('Location', '/account');
+                }
                 return $trustedResponse;
             }
             $methods = $this->repository->listVerifiedMfaMethods((int)$result['user']['id']);
@@ -126,17 +157,23 @@ final class AuthController
                     'user' => [
                         'id' => $result['user']['id'],
                         'email' => $result['user']['email'],
-                        'role' => $result['user']['role'] ?? null,
+                        'role' => $role,
                         'tenant_id' => $result['user']['tenant_id'] ?? null,
                     ],
                     'methods' => $pendingMethods,
+                    'force_password_change' => $forcePasswordChange,
                 ]);
                 Flash::add('info', '多要素認証を完了してください。');
                 return $response->withStatus(303)->withHeader('Location', '/login/mfa');
             }
 
             $response = $this->completeLogin($request, $response, $result['user'], 'ログインしました。');
+            SessionAuth::setForcePasswordChange($forcePasswordChange);
             $response = $this->clearTrustCookie($response);
+            if ($forcePasswordChange) {
+                Flash::add('error', 'プラットフォーム管理者のパスワードを更新してください。');
+                return $response->withHeader('Location', '/account');
+            }
             return $response;
         }
 
@@ -176,6 +213,22 @@ final class AuthController
                 }
             } catch (\Throwable) {
                 error_log('[auth] failed to delete user_active_sessions on logout');
+            }
+            $sessionKey = SessionAuth::getSessionKey();
+            if ($sessionKey !== null && $sessionKey !== '') {
+                $sessionHash = hash('sha256', $sessionKey);
+                try {
+                    $record = $this->repository->findLoginSessionByHash($sessionHash);
+                    if ($record !== null && (int)$record['user_id'] === (int)$user['id']) {
+                        $this->repository->revokeLoginSessionById((int)$user['id'], (int)$record['id'], AppTime::now());
+                    }
+                } catch (\PDOException $e) {
+                    if ($e->getCode() !== '42S02') {
+                        error_log('[auth] failed to revoke user_login_sessions on logout');
+                    }
+                } catch (\Throwable) {
+                    error_log('[auth] failed to revoke user_login_sessions on logout');
+                }
             }
         }
         // セッションを全破棄（将来セッションハンドラ導入後に置き換え）
@@ -249,6 +302,22 @@ final class AuthController
             }
         } catch (\Throwable) {
             error_log('[auth] failed to upsert user_active_sessions on login');
+        }
+        try {
+            $now = AppTime::now();
+            $this->repository->createLoginSession((int)$user['id'], $sessionHash, $now, $loginIp, $loginUa);
+            $this->repository->revokeOtherLoginSessions((int)$user['id'], $sessionHash, $now);
+            $userRef = hash('sha256', (string)$user['id']);
+            $ipLabel = $loginIp !== null ? $loginIp : 'unknown';
+            error_log(sprintf('[auth] login session created user_ref=%s ip=%s', $userRef, $ipLabel));
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '42S02') {
+                error_log('[auth] user_login_sessions table missing; session history is disabled until schema is applied');
+            } else {
+                error_log('[auth] failed to create user_login_sessions on login');
+            }
+        } catch (\Throwable) {
+            error_log('[auth] failed to create user_login_sessions on login');
         }
 
         Flash::add('success', $flashMessage);

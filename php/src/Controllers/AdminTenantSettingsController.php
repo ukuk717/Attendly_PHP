@@ -60,17 +60,25 @@ final class AdminTenantSettingsController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
+        if ($user === null) {
             throw new \RuntimeException('権限がありません。');
         }
-        if ($user['tenant_id'] === null) {
+        $tenantId = $user['tenant_id'] !== null ? (int)$user['tenant_id'] : null;
+        $role = $user['role'] ?? null;
+        if ($role === 'admin' && $tenantId !== null) {
+            $role = 'tenant_admin';
+        }
+        if ($role !== 'tenant_admin') {
+            throw new \RuntimeException('権限がありません。');
+        }
+        if ($tenantId === null) {
             throw new \RuntimeException('テナントに所属していません。');
         }
         return [
             'id' => $user['id'],
-            'tenant_id' => (int)$user['tenant_id'],
+            'tenant_id' => $tenantId,
             'email' => $user['email'],
-            'role' => $user['role'],
+            'role' => $role,
         ];
     }
 
@@ -81,4 +89,3 @@ final class AdminTenantSettingsController
         return $token !== '' && hash_equals(CsrfToken::getToken(), $token);
     }
 }
-

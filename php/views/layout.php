@@ -10,8 +10,10 @@
     $isAuthed = !empty($currentUser);
     $role = $isAuthed && is_array($currentUser) ? (string)($currentUser['role'] ?? '') : '';
     $tenantId = $isAuthed && is_array($currentUser) ? ($currentUser['tenant_id'] ?? null) : null;
-    $isPlatform = $isAuthed && $role === 'admin' && $tenantId === null;
-    $isTenantAdmin = $isAuthed && in_array($role, ['admin', 'tenant_admin'], true) && $tenantId !== null;
+    $isPlatform = $isAuthed && in_array($role, ['platform_admin', 'admin'], true) && $tenantId === null;
+    $isTenantAdmin = $isAuthed && $role === 'tenant_admin' && $tenantId !== null;
+    $currentPath = isset($currentPath) && is_string($currentPath) ? $currentPath : '';
+    $isPlatformAccountNav = $isPlatform && ($currentPath === '/account' || str_starts_with($currentPath, '/settings/mfa'));
     $displayName = '';
     if ($isAuthed && is_array($currentUser)) {
         $displayName = trim((string)($currentUser['name'] ?? ''));
@@ -21,7 +23,17 @@
             $displayName = trim($last . ' ' . $first);
         }
         if ($displayName === '') {
-            $displayName = trim((string)($currentUser['email'] ?? ''));
+            $email = trim((string)($currentUser['email'] ?? ''));
+            $maskEmailPaths = ['/account', '/accounts', '/settings/mfa'];
+            $maskEmailOnAccount = $currentPath !== ''
+                && (in_array($currentPath, $maskEmailPaths, true) || str_starts_with($currentPath, '/settings/mfa/'));
+            if ($maskEmailOnAccount && $email !== '' && str_contains($email, '@')) {
+                [$local, $domain] = explode('@', $email, 2);
+                $head = $local !== '' ? mb_substr($local, 0, 1, 'UTF-8') : '';
+                $displayName = $head . '***@' . $domain;
+            } else {
+                $displayName = $email;
+            }
         }
     }
   ?>
@@ -41,11 +53,15 @@
       <span class="menu-toggle__bar"></span>
     </button>
     <nav class="app-header__nav" id="primary-nav">
-      <a href="/web" class="nav-link">ホーム</a>
+      <?php if (!$isPlatformAccountNav): ?>
+        <a href="<?= $e($homeLink) ?>" class="nav-link">ホーム</a>
+      <?php endif; ?>
       <?php if ($isAuthed): ?>
-        <a href="/dashboard" class="nav-link">ダッシュボード</a>
+        <?php if (!$isPlatformAccountNav): ?>
+          <a href="/dashboard" class="nav-link">ダッシュボード</a>
+        <?php endif; ?>
         <?php if ($isPlatform): ?>
-          <a href="/platform/tenants" class="nav-link">テナント管理</a>
+          <a href="/platform/tenants" class="nav-link"><?= $isPlatformAccountNav ? 'テナント一覧' : 'テナント管理' ?></a>
         <?php elseif ($isTenantAdmin): ?>
           <a href="/admin/role-codes" class="nav-link">ロールコード管理</a>
           <a href="/admin/timesheets/export" class="nav-link">勤怠エクスポート</a>

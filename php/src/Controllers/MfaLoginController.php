@@ -50,6 +50,9 @@ final class MfaLoginController
     {
         $pending = SessionAuth::getPendingMfa();
         if ($pending === null) {
+            if (SessionAuth::getUser() !== null) {
+                return $response->withStatus(303)->withHeader('Location', '/dashboard');
+            }
             Flash::add('info', 'ログインからやり直してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -92,6 +95,9 @@ final class MfaLoginController
     {
         $pending = SessionAuth::getPendingMfa();
         if ($pending === null) {
+            if (SessionAuth::getUser() !== null) {
+                return $response->withStatus(303)->withHeader('Location', '/dashboard');
+            }
             Flash::add('info', 'ログインからやり直してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -156,6 +162,9 @@ final class MfaLoginController
     {
         $pending = SessionAuth::getPendingMfa();
         if ($pending === null) {
+            if (SessionAuth::getUser() !== null) {
+                return $response->withStatus(303)->withHeader('Location', '/dashboard');
+            }
             Flash::add('info', 'ログインからやり直してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -270,6 +279,9 @@ final class MfaLoginController
     public function cancel(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
     {
         if (SessionAuth::getPendingMfa() === null) {
+            if (SessionAuth::getUser() !== null) {
+                return $response->withStatus(303)->withHeader('Location', '/dashboard');
+            }
             Flash::add('info', 'ログインからやり直してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -450,8 +462,26 @@ final class MfaLoginController
         } catch (\Throwable) {
             error_log('[auth] failed to upsert user_active_sessions on login');
         }
+        try {
+            $now = AppTime::now();
+            $this->repository->createLoginSession((int)$pending['user']['id'], $sessionHash, $now, $loginIp, $loginUa);
+            $this->repository->revokeOtherLoginSessions((int)$pending['user']['id'], $sessionHash, $now);
+            $userRef = hash('sha256', (string)$pending['user']['id']);
+            $ipLabel = $loginIp !== null ? $loginIp : 'unknown';
+            error_log(sprintf('[auth] login session created user_ref=%s ip=%s', $userRef, $ipLabel));
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '42S02') {
+                error_log('[auth] user_login_sessions table missing; session history is disabled until schema is applied');
+            } else {
+                error_log('[auth] failed to create user_login_sessions on login');
+            }
+        } catch (\Throwable) {
+            error_log('[auth] failed to create user_login_sessions on login');
+        }
 
         Flash::add('success', 'ログインしました。');
+        $forcePasswordChange = !empty($pending['force_password_change']);
+        SessionAuth::setForcePasswordChange($forcePasswordChange);
         if ($rememberDevice) {
             $token = bin2hex(random_bytes(32));
             $hash = hash('sha256', $token);
@@ -467,6 +497,10 @@ final class MfaLoginController
             }
             $cookie = $this->buildTrustCookie($token, $expires);
             $response = $response->withHeader('Set-Cookie', $cookie);
+        }
+        if ($forcePasswordChange) {
+            Flash::add('error', 'プラットフォーム管理者のパスワードを更新してください。');
+            return $response->withStatus(303)->withHeader('Location', '/account');
         }
         return $response->withStatus(303)->withHeader('Location', '/dashboard');
     }

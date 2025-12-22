@@ -6,6 +6,7 @@ namespace Attendly\Services;
 
 use Attendly\Database\Repository;
 use Attendly\Support\AppTime;
+use Attendly\Support\BreakFeature;
 use DateInterval;
 use DateTimeImmutable;
 
@@ -42,6 +43,7 @@ final class WorkSessionService
     public function buildUserDashboardData(int $userId): array
     {
         $now = AppTime::now();
+        $breaksEnabled = BreakFeature::isEnabled();
         $rangeStart = $now->sub(new DateInterval('P29D'))->setTime(0, 0, 0);
         $monthStart = (new DateTimeImmutable(
             $now->format('Y-m-01 00:00:00'),
@@ -54,7 +56,7 @@ final class WorkSessionService
         $open = $this->repository->findOpenWorkSession($userId);
 
         $openBreak = null;
-        if ($open !== null) {
+        if ($open !== null && $breaksEnabled) {
             try {
                 $openBreak = $this->repository->findOpenWorkSessionBreak((int)$open['id']);
             } catch (\PDOException $e) {
@@ -72,7 +74,7 @@ final class WorkSessionService
         $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
 
         $breaksBySessionId = [];
-        if ($sessionIds !== []) {
+        if ($breaksEnabled && $sessionIds !== []) {
             try {
                 $breakRows = $this->repository->listWorkSessionBreaksBySessionIds($sessionIds);
                 foreach ($breakRows as $breakRow) {
@@ -103,22 +105,26 @@ final class WorkSessionService
             $end = $session['end_time'] ?? $now;
             $sessionBreaks = $breaksBySessionId[(int)$session['id']] ?? [];
             $grossMinutes = $this->diffMinutes($session['start_time'], $end);
-            $breakMinutes = $this->sumBreakExcludedMinutes(
-                $sessionBreaks,
-                $session['start_time'],
-                $end
-            );
+            $breakMinutes = $breaksEnabled
+                ? $this->sumBreakExcludedMinutes(
+                    $sessionBreaks,
+                    $session['start_time'],
+                    $end
+                )
+                : 0;
             $minutes = max(0, $grossMinutes - $breakMinutes);
             $startDateKey = $session['start_time']->setTimezone(AppTime::timezone())->format('Y-m-d');
             if (!isset($dailyMinutes[$startDateKey])) {
                 $dailyMinutes[$startDateKey] = 0;
             }
             $dailyMinutes[$startDateKey] += $minutes;
-            if (!isset($dailyBreakMinutes[$startDateKey])) {
-                $dailyBreakMinutes[$startDateKey] = 0;
+            if ($breaksEnabled) {
+                if (!isset($dailyBreakMinutes[$startDateKey])) {
+                    $dailyBreakMinutes[$startDateKey] = 0;
+                }
+                $dailyBreakMinutes[$startDateKey] += $breakMinutes;
             }
-            $dailyBreakMinutes[$startDateKey] += $breakMinutes;
-            if ($session['end_time'] !== null && $session['end_time'] instanceof DateTimeImmutable) {
+            if ($breaksEnabled && $session['end_time'] !== null && $session['end_time'] instanceof DateTimeImmutable) {
                 $edgeWarning = BreakComplianceService::hasEdgeBreakWarning(
                     $sessionBreaks,
                     $session['start_time'],
@@ -132,11 +138,13 @@ final class WorkSessionService
             if ($end > $monthStart) {
                 $monthlyStart = $session['start_time'] < $monthStart ? $monthStart : $session['start_time'];
                 $monthlyGross = $this->diffMinutes($monthlyStart, $end);
-                $monthlyBreak = $this->sumBreakExcludedMinutes(
-                    $sessionBreaks,
-                    $monthlyStart,
-                    $end
-                );
+                $monthlyBreak = $breaksEnabled
+                    ? $this->sumBreakExcludedMinutes(
+                        $sessionBreaks,
+                        $monthlyStart,
+                        $end
+                    )
+                    : 0;
                 $monthlyTotal += max(0, $monthlyGross - $monthlyBreak);
             }
         }
@@ -148,8 +156,8 @@ final class WorkSessionService
                 continue;
             }
             $breakShortageMinutes = 0;
-            $edgeBreakWarning = !empty($dailyEdgeWarnings[$date]);
-            if ($openDayKey === null || $date !== $openDayKey) {
+            $edgeBreakWarning = $breaksEnabled ? !empty($dailyEdgeWarnings[$date]) : false;
+            if ($breaksEnabled && ($openDayKey === null || $date !== $openDayKey)) {
                 $breakShortageMinutes = BreakComplianceService::breakShortageMinutes(
                     $minutes,
                     (int)($dailyBreakMinutes[$date] ?? 0)
@@ -164,19 +172,21 @@ final class WorkSessionService
             ];
         }
 
-        $recentFormatted = array_map(function (array $row) use ($now, $breaksBySessionId, $edgeMinutes): array {
+        $recentFormatted = array_map(function (array $row) use ($now, $breaksBySessionId, $edgeMinutes, $breaksEnabled): array {
             $end = $row['end_time'] ?? $now;
             $sessionBreaks = $breaksBySessionId[(int)$row['id']] ?? [];
             $grossMinutes = $this->diffMinutes($row['start_time'], $end);
-            $breakMinutes = $this->sumBreakExcludedMinutes(
-                $sessionBreaks,
-                $row['start_time'],
-                $end
-            );
+            $breakMinutes = $breaksEnabled
+                ? $this->sumBreakExcludedMinutes(
+                    $sessionBreaks,
+                    $row['start_time'],
+                    $end
+                )
+                : 0;
             $netMinutes = max(0, $grossMinutes - $breakMinutes);
             $breakShortageMinutes = 0;
             $edgeBreakWarning = false;
-            if ($row['end_time'] !== null && $row['end_time'] instanceof DateTimeImmutable) {
+            if ($breaksEnabled && $row['end_time'] !== null && $row['end_time'] instanceof DateTimeImmutable) {
                 $breakShortageMinutes = BreakComplianceService::breakShortageMinutes($netMinutes, $breakMinutes);
                 $edgeBreakWarning = BreakComplianceService::hasEdgeBreakWarning(
                     $sessionBreaks,
@@ -218,13 +228,14 @@ final class WorkSessionService
      */
     public function buildTenantDashboardData(int $tenantId): array
     {
+        $breaksEnabled = BreakFeature::isEnabled();
         $active = $this->repository->countActiveEmployees($tenantId);
         $openCount = $this->repository->countOpenWorkSessionsByTenant($tenantId);
         $recentSessions = $this->repository->listRecentWorkSessionsByTenant($tenantId, 8);
         $now = AppTime::now();
 
         $breaksBySessionId = [];
-        if ($recentSessions !== []) {
+        if ($breaksEnabled && $recentSessions !== []) {
             $sessionIds = array_map(static fn(array $row): int => (int)$row['id'], $recentSessions);
             $sessionIds = array_values(array_unique(array_filter($sessionIds, static fn(int $id): bool => $id > 0)));
             try {
@@ -243,18 +254,20 @@ final class WorkSessionService
             }
         }
 
-        $recent = array_map(function (array $row) use ($now, $breaksBySessionId): array {
+        $recent = array_map(function (array $row) use ($now, $breaksBySessionId, $breaksEnabled): array {
             $label = trim(($row['last_name'] ?? '') . ' ' . ($row['first_name'] ?? ''));
             if ($label === '') {
                 $label = $row['email'] ?? '従業員';
             }
             $end = $row['end_time'] ?? $now;
             $grossMinutes = $this->diffMinutes($row['start_time'], $end);
-            $breakMinutes = $this->sumBreakExcludedMinutes(
-                $breaksBySessionId[(int)$row['id']] ?? [],
-                $row['start_time'],
-                $end
-            );
+            $breakMinutes = $breaksEnabled
+                ? $this->sumBreakExcludedMinutes(
+                    $breaksBySessionId[(int)$row['id']] ?? [],
+                    $row['start_time'],
+                    $end
+                )
+                : 0;
             $netMinutes = max(0, $grossMinutes - $breakMinutes);
             return [
                 'user_label' => $label,

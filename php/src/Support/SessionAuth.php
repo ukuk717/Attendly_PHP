@@ -16,17 +16,20 @@ final class SessionAuth
     private const AUTH_TIME_KEY = '_auth_time';
     private const PENDING_PASSKEY_REG_KEY = '_pending_passkey_reg';
     private const PENDING_PASSKEY_LOGIN_KEY = '_pending_passkey_login';
+    private const FORCE_PASSWORD_CHANGE_KEY = '_force_password_change';
 
     /**
      * @param array{id:int|null,email:string|null,role?:string|null,tenant_id?:int|null} $user
      */
     public static function setUser(array $user): void
     {
+        $tenantId = isset($user['tenant_id']) ? (int)$user['tenant_id'] : null;
+        $role = self::normalizeRole($user['role'] ?? null, $tenantId);
         $_SESSION[self::USER_KEY] = [
             'id' => $user['id'] ?? null,
             'email' => $user['email'] ?? null,
-            'role' => $user['role'] ?? null,
-            'tenant_id' => isset($user['tenant_id']) ? (int)$user['tenant_id'] : null,
+            'role' => $role,
+            'tenant_id' => $tenantId,
         ];
         $_SESSION[self::AUTH_TIME_KEY] = time();
     }
@@ -59,11 +62,13 @@ final class SessionAuth
         if (!is_array($user)) {
             return null;
         }
+        $tenantId = isset($user['tenant_id']) ? (int)$user['tenant_id'] : null;
+        $role = self::normalizeRole($user['role'] ?? null, $tenantId);
         return [
             'id' => $user['id'] ?? null,
             'email' => $user['email'] ?? null,
-            'role' => $user['role'] ?? null,
-            'tenant_id' => isset($user['tenant_id']) ? (int)$user['tenant_id'] : null,
+            'role' => $role,
+            'tenant_id' => $tenantId,
         ];
     }
 
@@ -78,13 +83,15 @@ final class SessionAuth
         unset($_SESSION[self::AUTH_TIME_KEY]);
         unset($_SESSION[self::PENDING_PASSKEY_REG_KEY]);
         unset($_SESSION[self::PENDING_PASSKEY_LOGIN_KEY]);
+        unset($_SESSION[self::FORCE_PASSWORD_CHANGE_KEY]);
     }
 
     /**
      * @param array{
      *   user:array{id:int,email:string,role:?string,tenant_id:?int},
      *   methods:array<int,array{id:int,type:string,target_email:string}>,
-     *   created_at?:int
+     *   created_at?:int,
+     *   force_password_change?:bool
      * } $payload
      */
     public static function setPendingMfa(array $payload): void
@@ -92,6 +99,8 @@ final class SessionAuth
         if (empty($payload['user']['id']) || empty($payload['user']['email'])) {
             return;
         }
+        $tenantId = isset($payload['user']['tenant_id']) ? (int)$payload['user']['tenant_id'] : null;
+        $role = self::normalizeRole($payload['user']['role'] ?? null, $tenantId);
         $methods = [];
         foreach ($payload['methods'] ?? [] as $method) {
             if (!is_array($method) || empty($method['id']) || empty($method['type'])) {
@@ -110,11 +119,12 @@ final class SessionAuth
             'user' => [
                 'id' => (int)$payload['user']['id'],
                 'email' => (string)$payload['user']['email'],
-                'role' => $payload['user']['role'] ?? null,
-                'tenant_id' => isset($payload['user']['tenant_id']) ? (int)$payload['user']['tenant_id'] : null,
+                'role' => $role,
+                'tenant_id' => $tenantId,
             ],
             'methods' => $methods,
             'created_at' => isset($payload['created_at']) ? (int)$payload['created_at'] : time(),
+            'force_password_change' => !empty($payload['force_password_change']),
         ];
     }
 
@@ -122,7 +132,8 @@ final class SessionAuth
      * @return array{
      *   user:array{id:int,email:string,role:?string,tenant_id:?int},
      *   methods:array<int,array{id:int,type:string,target_email:string}>,
-     *   created_at:int
+     *   created_at:int,
+     *   force_password_change:bool
      * }|null
      */
     public static function getPendingMfa(): ?array
@@ -161,21 +172,43 @@ final class SessionAuth
             self::clearPendingMfa();
             return null;
         }
+        $tenantId = isset($pending['user']['tenant_id']) ? (int)$pending['user']['tenant_id'] : null;
+        $role = self::normalizeRole($pending['user']['role'] ?? null, $tenantId);
         return [
             'user' => [
                 'id' => (int)$pending['user']['id'],
                 'email' => (string)$pending['user']['email'],
-                'role' => $pending['user']['role'] ?? null,
-                'tenant_id' => isset($pending['user']['tenant_id']) ? (int)$pending['user']['tenant_id'] : null,
+                'role' => $role,
+                'tenant_id' => $tenantId,
             ],
             'methods' => $methods,
             'created_at' => $createdAt,
+            'force_password_change' => !empty($pending['force_password_change']),
         ];
     }
 
     public static function clearPendingMfa(): void
     {
         unset($_SESSION[self::PENDING_MFA_KEY]);
+    }
+
+    public static function setForcePasswordChange(bool $required): void
+    {
+        if ($required) {
+            $_SESSION[self::FORCE_PASSWORD_CHANGE_KEY] = true;
+            return;
+        }
+        unset($_SESSION[self::FORCE_PASSWORD_CHANGE_KEY]);
+    }
+
+    public static function needsPasswordChange(): bool
+    {
+        return !empty($_SESSION[self::FORCE_PASSWORD_CHANGE_KEY]);
+    }
+
+    public static function clearForcePasswordChange(): void
+    {
+        unset($_SESSION[self::FORCE_PASSWORD_CHANGE_KEY]);
     }
 
     public static function setPendingTotpSecret(string $secret): void
@@ -440,5 +473,13 @@ final class SessionAuth
             return false;
         }
         return (time() - $timestamp) <= $ttlSeconds;
+    }
+
+    private static function normalizeRole(?string $role, ?int $tenantId): ?string
+    {
+        if ($role !== 'admin') {
+            return $role;
+        }
+        return $tenantId === null ? 'platform_admin' : 'tenant_admin';
     }
 }

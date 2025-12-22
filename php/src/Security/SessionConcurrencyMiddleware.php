@@ -76,6 +76,20 @@ final class SessionConcurrencyMiddleware implements MiddlewareInterface
             return $handler->handle($request);
         }
 
+        try {
+            $loginSession = $this->repository->findLoginSessionByHash($sessionHash);
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '42S02') {
+                return $handler->handle($request);
+            }
+            throw $e;
+        }
+        if ($loginSession !== null && $loginSession['revoked_at'] !== null) {
+            SessionAuth::clear();
+            Flash::add('error', 'セッションが失効しました。ログインし直してください。');
+            return $handler->handle($request);
+        }
+
         return $handler->handle($request);
     }
 

@@ -9,6 +9,7 @@ use Attendly\Support\AppTime;
 use Attendly\Support\Base64Url;
 use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
+use Attendly\Support\PasswordHasher;
 use Attendly\Support\RateLimiter;
 use Attendly\Support\SessionAuth;
 use lbuchs\WebAuthn\Binary\ByteBuffer;
@@ -264,9 +265,26 @@ final class PasskeyController
                 return $this->json($response, ['error' => 'not_available'], 400);
             }
             $role = $user['role'] ?? null;
-            $allowedRoles = ['admin', 'tenant_admin', 'employee'];
+            $tenantId = $user['tenant_id'] ?? null;
+            if ($role === 'admin') {
+                $role = $tenantId === null ? 'platform_admin' : 'tenant_admin';
+            }
+            $allowedRoles = ['platform_admin', 'tenant_admin', 'employee'];
             if ($role !== null && !in_array($role, $allowedRoles, true)) {
                 return $this->json($response, ['error' => 'not_available'], 400);
+            }
+            if ($role === 'platform_admin' && $tenantId !== null) {
+                return $this->json($response, ['error' => 'not_available'], 400);
+            }
+            if ($role === 'tenant_admin' && $tenantId === null) {
+                return $this->json($response, ['error' => 'not_available'], 400);
+            }
+            if ($role === 'platform_admin') {
+                $hasher = new PasswordHasher();
+                if (!$hasher->hasPepper()) {
+                    error_log('[passkey] PASSWORD_PEPPER missing for platform_admin login');
+                    return $this->json($response, ['error' => 'not_available'], 400);
+                }
             }
             $lockedUntil = $user['locked_until'] ?? null;
             if ($lockedUntil instanceof \DateTimeImmutable && $lockedUntil > AppTime::now()) {
@@ -377,10 +395,27 @@ final class PasskeyController
         if ($lockedUntil instanceof \DateTimeImmutable && $lockedUntil > AppTime::now()) {
             return $this->json($response, ['error' => 'inactive_user'], 400);
         }
-        $allowedRoles = ['admin', 'tenant_admin', 'employee'];
         $role = $user['role'] ?? null;
+        $tenantId = $user['tenant_id'] ?? null;
+        if ($role === 'admin') {
+            $role = $tenantId === null ? 'platform_admin' : 'tenant_admin';
+        }
+        $allowedRoles = ['platform_admin', 'tenant_admin', 'employee'];
         if ($role !== null && !in_array($role, $allowedRoles, true)) {
             return $this->json($response, ['error' => 'inactive_user'], 400);
+        }
+        if ($role === 'platform_admin' && $tenantId !== null) {
+            return $this->json($response, ['error' => 'inactive_user'], 400);
+        }
+        if ($role === 'tenant_admin' && $tenantId === null) {
+            return $this->json($response, ['error' => 'inactive_user'], 400);
+        }
+        if ($role === 'platform_admin') {
+            $hasher = new PasswordHasher();
+            if (!$hasher->hasPepper()) {
+                error_log('[passkey] PASSWORD_PEPPER missing for platform_admin login');
+                return $this->json($response, ['error' => 'inactive_user'], 400);
+            }
         }
 
         if ($userHandle !== '' && $passkey['user_handle'] !== '' && $userHandle !== $passkey['user_handle']) {
@@ -511,11 +546,16 @@ final class PasskeyController
 
         $sessionKey = bin2hex(random_bytes(32));
         SessionAuth::setSessionKey($sessionKey);
+        $role = $user['role'] ?? null;
+        $tenantId = $user['tenant_id'] ?? null;
+        if ($role === 'admin') {
+            $role = $tenantId === null ? 'platform_admin' : 'tenant_admin';
+        }
         SessionAuth::setUser([
             'id' => $user['id'],
             'email' => $user['email'],
-            'role' => $user['role'] ?? null,
-            'tenant_id' => $user['tenant_id'] ?? null,
+            'role' => $role,
+            'tenant_id' => $tenantId,
         ]);
         SessionAuth::clearPendingMfa();
 
@@ -538,6 +578,22 @@ final class PasskeyController
             }
         } catch (\Throwable) {
             error_log('[auth] failed to upsert user_active_sessions on login');
+        }
+        try {
+            $now = AppTime::now();
+            $this->repository->createLoginSession((int)$user['id'], $sessionHash, $now, $loginIp, $loginUa);
+            $this->repository->revokeOtherLoginSessions((int)$user['id'], $sessionHash, $now);
+            $userRef = hash('sha256', (string)$user['id']);
+            $ipLabel = $loginIp !== null ? $loginIp : 'unknown';
+            error_log(sprintf('[auth] login session created user_ref=%s ip=%s', $userRef, $ipLabel));
+        } catch (\PDOException $e) {
+            if ($e->getCode() === '42S02') {
+                error_log('[auth] user_login_sessions table missing; session history is disabled until schema is applied');
+            } else {
+                error_log('[auth] failed to create user_login_sessions on login');
+            }
+        } catch (\Throwable) {
+            error_log('[auth] failed to create user_login_sessions on login');
         }
 
         Flash::add('success', 'パスキーでログインしました。');

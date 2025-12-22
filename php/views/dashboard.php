@@ -45,20 +45,22 @@
     </button>
   </form>
 
-  <?php if (!empty($openSession)): ?>
-    <form method="post" action="<?= !empty($openBreak) ? '/work-sessions/break/end' : '/work-sessions/break/start' ?>" class="form-inline" style="margin-top: 10px;">
-      <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-      <button type="submit" class="btn secondary">
-        <?php if (!empty($openBreak)): ?>
-          休憩終了を記録
-        <?php else: ?>
-          休憩開始を記録
-        <?php endif; ?>
-      </button>
-    </form>
-    <p class="form-note" style="margin-top: 8px;">勤務中のみ休憩の開始/終了を記録できます。</p>
-  <?php else: ?>
-    <p class="form-note" style="margin-top: 10px;">休憩の記録は勤務開始後に利用できます。</p>
+  <?php if (!empty($breaksEnabled)): ?>
+    <?php if (!empty($openSession)): ?>
+      <form method="post" action="<?= !empty($openBreak) ? '/work-sessions/break/end' : '/work-sessions/break/start' ?>" class="form-inline" style="margin-top: 10px;">
+        <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+        <button type="submit" class="btn secondary">
+          <?php if (!empty($openBreak)): ?>
+            休憩終了を記録
+          <?php else: ?>
+            休憩開始を記録
+          <?php endif; ?>
+        </button>
+      </form>
+      <p class="form-note" style="margin-top: 8px;">勤務中のみ休憩の開始/終了を記録できます。</p>
+    <?php else: ?>
+      <p class="form-note" style="margin-top: 10px;">休憩の記録は勤務開始後に利用できます。</p>
+    <?php endif; ?>
   <?php endif; ?>
 </section>
 

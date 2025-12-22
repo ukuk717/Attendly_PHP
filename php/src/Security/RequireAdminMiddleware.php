@@ -12,8 +12,7 @@ use Psr\Http\Server\RequestHandlerInterface;
 use Slim\Psr7\Response;
 
 /**
- * 管理者ロール（admin、tenant_admin）を許可するミドルウェア。
- * currentUser に role=admin と tenant_id がセットされていない場合は 403/リダイレクトで拒否する。
+ * テナント管理者ロール（tenant_admin）を許可するミドルウェア。
  */
 final class RequireAdminMiddleware implements MiddlewareInterface
 {
@@ -21,7 +20,7 @@ final class RequireAdminMiddleware implements MiddlewareInterface
     {
         $user = $request->getAttribute('currentUser');
         $isAdmin = is_array($user)
-            && in_array(($user['role'] ?? null), ['admin', 'tenant_admin'], true)
+            && ($user['role'] ?? null) === 'tenant_admin'
             && !empty($user['id'])
             && isset($user['tenant_id']);
 

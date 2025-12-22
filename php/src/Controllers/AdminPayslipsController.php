@@ -10,22 +10,30 @@ use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\Support\Mailer;
 use Attendly\Support\RateLimiter;
+use Attendly\Services\SignedDownloadService;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Slim\Psr7\Stream;
 
 final class AdminPayslipsController
 {
     private Repository $repository;
     private Mailer $mailer;
+    private SignedDownloadService $signedDownloads;
     private string $storageDir;
     private int $perPage;
 
-    public function __construct(private View $view, ?Repository $repository = null, ?Mailer $mailer = null, ?string $storageDir = null)
+    public function __construct(
+        private View $view,
+        ?Repository $repository = null,
+        ?Mailer $mailer = null,
+        ?SignedDownloadService $signedDownloads = null,
+        ?string $storageDir = null
+    )
     {
         $this->repository = $repository ?? new Repository();
         $this->mailer = $mailer ?? new Mailer();
+        $this->signedDownloads = $signedDownloads ?? new SignedDownloadService($this->repository);
         $this->storageDir = $storageDir ?: dirname(__DIR__, 2) . '/storage/payslips';
         $this->perPage = 50;
     }
@@ -66,6 +74,9 @@ final class AdminPayslipsController
             $sentAt = $row['sent_at'] instanceof \DateTimeInterface
                 ? $row['sent_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
                 : 'N/A';
+            $downloadedAt = $row['downloaded_at'] instanceof \DateTimeInterface
+                ? $row['downloaded_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
+                : null;
 
             $label = $this->buildEmployeeLabel(
                 $row['employee_last_name'] ?? null,
@@ -80,6 +91,7 @@ final class AdminPayslipsController
                 'employee_label' => $label,
                 'sent_on' => $sentOn,
                 'sent_at' => $sentAt,
+                'downloaded_at' => $downloadedAt,
                 'file_name' => basename((string)$row['original_file_name']),
                 'file_size' => $row['file_size'] !== null ? (int)$row['file_size'] : null,
             ];
@@ -151,35 +163,18 @@ final class AdminPayslipsController
             return $response->withStatus(303)->withHeader('Location', '/admin/payslips');
         }
 
-        $realBase = realpath($this->storageDir);
-        $realPath = realpath((string)$record['stored_file_path']);
-        if ($realBase === false || $realPath === false || !str_starts_with($realPath, $realBase . DIRECTORY_SEPARATOR)) {
-            Flash::add('error', 'ファイルのパス検証に失敗しました。');
+        try {
+            $signed = $this->signedDownloads->issueForPayslip([
+                'id' => $record['id'],
+                'stored_file_path' => $record['stored_file_path'],
+                'original_file_name' => $record['original_file_name'],
+                'mime_type' => $record['mime_type'] ?? null,
+            ], $admin['id']);
+        } catch (\Throwable) {
+            Flash::add('error', '署名URLの発行に失敗しました。');
             return $response->withStatus(303)->withHeader('Location', '/admin/payslips');
         }
-        if (!is_file($realPath) || !is_readable($realPath)) {
-            Flash::add('error', '明細ファイルを開けませんでした。');
-            return $response->withStatus(303)->withHeader('Location', '/admin/payslips');
-        }
-
-        $fileName = basename((string)$record['original_file_name']);
-        $fileName = str_replace(['"', "\r", "\n"], '', $fileName);
-        $handle = fopen($realPath, 'rb');
-        if ($handle === false) {
-            Flash::add('error', '明細ファイルを開けませんでした。');
-            return $response->withStatus(303)->withHeader('Location', '/admin/payslips');
-        }
-
-        $size = filesize($realPath);
-        $stream = new Stream($handle);
-        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $fileName, rawurlencode($fileName));
-        $response = $response->withBody($stream);
-        if ($size !== false) {
-            $response = $response->withHeader('Content-Length', (string)$size);
-        }
-        return $response
-            ->withHeader('Content-Type', 'application/octet-stream')
-            ->withHeader('Content-Disposition', $disposition);
+        return $response->withStatus(303)->withHeader('Location', $signed['url']);
     }
 
     public function resend(ServerRequestInterface $request, ResponseInterface $response, array $args): ResponseInterface
@@ -244,7 +239,17 @@ final class AdminPayslipsController
             ? $record['sent_on']->setTimezone(AppTime::timezone())->format('Y-m-d')
             : 'N/A';
         $subject = sprintf('【%s】給与明細のご案内（再送・%s）', $brand, $sentOn);
-        $portalUrl = $this->buildPayrollPortalUrl();
+        try {
+            $signed = $this->signedDownloads->issueForPayslip([
+                'id' => $record['id'],
+                'stored_file_path' => $record['stored_file_path'],
+                'original_file_name' => $record['original_file_name'],
+                'mime_type' => $record['mime_type'] ?? null,
+            ], $admin['id']);
+        } catch (\Throwable) {
+            Flash::add('error', '署名URLの発行に失敗しました。');
+            return $response->withStatus(303)->withHeader('Location', $returnTo);
+        }
         $employeeName = trim((string)($employee['name'] ?? ''));
         if ($employeeName === '') {
             $employeeName = trim((string)($employee['last_name'] ?? '') . ' ' . (string)($employee['first_name'] ?? ''));
@@ -252,14 +257,16 @@ final class AdminPayslipsController
         if ($employeeName === '') {
             $employeeName = '従業員';
         }
+        $ttlDays = $this->signedUrlTtlDays();
         $lines = [
             "{$employeeName} 様",
             '',
             "{$brand} から給与明細のご案内（再送）です。",
-            'ログイン後、以下のページから明細を確認してください。',
-            $portalUrl !== null ? $portalUrl : '（ポータルURL未設定のため、ログイン後に「給与明細」画面を開いてください）',
+            '以下の署名付きURLからダウンロードしてください（有効期限あり）。',
+            $signed['url'],
             '',
             '対象の支給日: ' . $sentOn,
+            'URLの有効期限: ' . $ttlDays . '日',
             '',
             'このメールに心当たりがない場合は、管理者へご連絡ください。',
         ];
@@ -300,16 +307,6 @@ final class AdminPayslipsController
             $params['employee_id'] = (string)$employeeId;
         }
         return '/admin/payslips?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
-    }
-
-    private function buildPayrollPortalUrl(): ?string
-    {
-        $base = trim((string)($_ENV['APP_BASE_URL'] ?? ''));
-        if ($base === '') {
-            return null;
-        }
-        $base = rtrim($base, '/');
-        return $base . '/payrolls';
     }
 
     private function buildEmployeeLabel(?string $lastName, ?string $firstName, ?string $email, int $employeeId, ?string $status): string
@@ -353,6 +350,17 @@ final class AdminPayslipsController
         return $employeeId > 0 ? $employeeId : null;
     }
 
+    private function signedUrlTtlDays(): int
+    {
+        $ttlDays = filter_var($_ENV['SIGNED_URL_TTL_DAYS'] ?? 7, FILTER_VALIDATE_INT, [
+            'options' => ['default' => 7, 'min_range' => 1, 'max_range' => 30],
+        ]);
+        if ($ttlDays === false) {
+            $ttlDays = 7;
+        }
+        return (int)$ttlDays;
+    }
+
     /**
      * @return array{id:int,tenant_id:int,email:string,role:string}
      */
@@ -363,17 +371,25 @@ final class AdminPayslipsController
             throw new \RuntimeException('認証が必要です。');
         }
         $user = $this->repository->findUserById((int)$sessionUser['id']);
-        if ($user === null || !in_array(($user['role'] ?? ''), ['admin', 'tenant_admin'], true)) {
+        if ($user === null) {
             throw new \RuntimeException('権限がありません。');
         }
-        if ($user['tenant_id'] === null) {
+        $tenantId = $user['tenant_id'] !== null ? (int)$user['tenant_id'] : null;
+        $role = $user['role'] ?? null;
+        if ($role === 'admin' && $tenantId !== null) {
+            $role = 'tenant_admin';
+        }
+        if ($role !== 'tenant_admin') {
+            throw new \RuntimeException('権限がありません。');
+        }
+        if ($tenantId === null) {
             throw new \RuntimeException('テナントに所属していません。');
         }
         return [
             'id' => $user['id'],
-            'tenant_id' => (int)$user['tenant_id'],
+            'tenant_id' => $tenantId,
             'email' => $user['email'],
-            'role' => $user['role'],
+            'role' => $role,
         ];
     }
 }

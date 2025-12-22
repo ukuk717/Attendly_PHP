@@ -5,23 +5,30 @@ declare(strict_types=1);
 namespace Attendly\Controllers;
 
 use Attendly\Database\Repository;
+use Attendly\Services\SignedDownloadService;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Slim\Psr7\Stream;
 
 final class PayrollViewerController
 {
     private Repository $repository;
     private View $view;
+    private SignedDownloadService $signedDownloads;
     private string $storageDir;
 
-    public function __construct(?View $view = null, ?Repository $repository = null, ?string $storageDir = null)
+    public function __construct(
+        ?View $view = null,
+        ?Repository $repository = null,
+        ?SignedDownloadService $signedDownloads = null,
+        ?string $storageDir = null
+    )
     {
         $this->repository = $repository ?? new Repository();
         $this->view = $view ?? new View(dirname(__DIR__, 2) . '/views');
+        $this->signedDownloads = $signedDownloads ?? new SignedDownloadService($this->repository);
         $this->storageDir = $storageDir ?: dirname(__DIR__, 2) . '/storage/payslips';
     }
 
@@ -33,7 +40,7 @@ final class PayrollViewerController
         }
         $records = $this->repository->listPayrollRecordsByEmployee((int)$user['id'], 50);
         $items = array_map(static function (array $row): array {
-            if (!$row['sent_on'] instanceof \DateTime || !$row['sent_at'] instanceof \DateTime) {
+            if (!$row['sent_on'] instanceof \DateTimeInterface || !$row['sent_at'] instanceof \DateTimeInterface) {
                 throw new \RuntimeException('Invalid payroll record date format');
             }
             return [
@@ -73,33 +80,17 @@ final class PayrollViewerController
             return $response->withStatus(303)->withHeader('Location', '/payrolls');
         }
 
-        $realBase = realpath($this->storageDir);
-        $realPath = realpath($record['stored_file_path']);
-        if ($realBase === false || $realPath === false || !str_starts_with($realPath, $realBase . DIRECTORY_SEPARATOR)) {
-            Flash::add('error', 'ファイルのパス検証に失敗しました。');
+        try {
+            $signed = $this->signedDownloads->issueForPayslip([
+                'id' => $record['id'],
+                'stored_file_path' => $record['stored_file_path'],
+                'original_file_name' => $record['original_file_name'],
+                'mime_type' => $record['mime_type'] ?? null,
+            ], null);
+        } catch (\Throwable) {
+            Flash::add('error', '署名URLの発行に失敗しました。');
             return $response->withStatus(303)->withHeader('Location', '/payrolls');
         }
-        if (!is_file($realPath) || !is_readable($realPath)) {
-            Flash::add('error', '明細ファイルを開けませんでした。');
-            return $response->withStatus(303)->withHeader('Location', '/payrolls');
-        }
-        $fileName = basename($record['original_file_name']);
-        // Remove characters that could break header syntax
-        $fileName = str_replace(['"', "\r", "\n"], '', $fileName);
-        $handle = fopen($realPath, 'rb');
-        if ($handle === false) {
-            Flash::add('error', '明細ファイルを開けませんでした。');
-            return $response->withStatus(303)->withHeader('Location', '/payrolls');
-        }
-        $size = filesize($realPath);
-        $stream = new Stream($handle);
-        $disposition = sprintf('attachment; filename="%s"; filename*=UTF-8\'\'%s', $fileName, rawurlencode($fileName));
-        $response = $response->withBody($stream);
-        if ($size !== false) {
-            $response = $response->withHeader('Content-Length', (string)$size);
-        }
-        return $response
-            ->withHeader('Content-Type', 'application/octet-stream')
-            ->withHeader('Content-Disposition', $disposition);
+        return $response->withStatus(303)->withHeader('Location', $signed['url']);
     }
 }

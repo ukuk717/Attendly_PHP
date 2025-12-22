@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>給与明細管理</h2>
-  <p class="form-note">送信済み給与明細の一覧・再送・ダウンロードができます。</p>
+  <p class="form-note">送信済み給与明細の一覧・再送・署名URLによるダウンロードができます。</p>
   <p><a class="btn link" href="/admin/payslips/send">給与明細を送信する</a></p>
 </div>
 
@@ -25,16 +25,17 @@
     <table class="table">
       <thead>
         <tr>
-          <th>送信日</th>
+          <th>受給日</th>
           <th>送信日時</th>
           <th>従業員</th>
           <th>ファイル</th>
+          <th>受領</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($items)): ?>
-          <tr><td colspan="5">明細がありません。</td></tr>
+          <tr><td colspan="6">明細がありません。</td></tr>
         <?php else: ?>
           <?php foreach ($items as $row): ?>
             <tr>
@@ -48,7 +49,14 @@
                 <?php endif; ?>
               </td>
               <td>
-                <a class="btn link" href="/admin/payslips/<?= $e((string)$row['id']) ?>/download">ダウンロード</a>
+                <?php if (!empty($row['downloaded_at'])): ?>
+                  <?= $e((string)$row['downloaded_at']) ?>
+                <?php else: ?>
+                  <span class="muted">未確認</span>
+                <?php endif; ?>
+              </td>
+              <td>
+                <a class="btn link" href="/admin/payslips/<?= $e((string)$row['id']) ?>/download">署名URLでダウンロード</a>
                 <form method="post" action="/admin/payslips/<?= $e((string)$row['id']) ?>/resend" class="form-inline" style="display:inline-flex; gap: 6px; margin-left: 6px;">
                   <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
                   <input type="hidden" name="return_to" value="<?= $e((string)($returnTo ?? '/admin/payslips')) ?>">

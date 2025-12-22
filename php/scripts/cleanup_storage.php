@@ -180,12 +180,16 @@ $resultExports = prune_export_files($projectRoot . '/storage/exports', $exportRe
 
 $payrollRetentionDays = env_int('PAYROLL_RETENTION_DAYS', 0, 0, 36500);
 $payrollCleanupLimit = env_int('PAYROLL_CLEANUP_LIMIT', 200, 1, 5000);
+$signedCleanupLimit = env_int('SIGNED_URL_CLEANUP_LIMIT', 5000, 100, 10000);
+
+$repo = new Repository();
+$signedDeleted = $repo->deleteExpiredSignedDownloads(AppTime::now(), $signedCleanupLimit);
 
 $resultPayrolls = ['archived' => 0, 'files_deleted' => 0, 'skipped' => 0];
 if ($payrollRetentionDays > 0) {
-    $repo = new Repository();
     $resultPayrolls = archive_old_payrolls($repo, $projectRoot . '/storage/payslips', $payrollRetentionDays, $payrollCleanupLimit);
 }
 
 echo "[exports] scanned={$resultExports['scanned']} deleted={$resultExports['deleted']} remaining={$resultExports['remaining']} freed_bytes={$resultExports['freed_bytes']}\n";
+echo "[signed_urls] deleted={$signedDeleted}\n";
 echo "[payrolls] archived={$resultPayrolls['archived']} files_deleted={$resultPayrolls['files_deleted']} skipped={$resultPayrolls['skipped']}\n";

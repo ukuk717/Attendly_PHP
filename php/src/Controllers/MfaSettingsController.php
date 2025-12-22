@@ -65,6 +65,7 @@ final class MfaSettingsController
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'currentPath' => $request->getUri()->getPath(),
             'totpVerified' => $verifiedTotp !== null,
             'pendingSecret' => $pendingSecret,
             'totpUri' => $totpUri,

@@ -41,6 +41,8 @@
     </button>
     <nav class="app-header__nav" id="primary-nav">
       <a href="/platform/tenants" class="nav-link">テナント一覧</a>
+      <a href="/account" class="nav-link">アカウント設定</a>
+      <a href="/settings/mfa" class="nav-link">MFA設定</a>
       <?php if ($displayName !== ''): ?>
         <span class="nav-user"><?= $e($displayName) ?></span>
       <?php endif; ?>

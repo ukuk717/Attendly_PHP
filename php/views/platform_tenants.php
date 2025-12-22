@@ -5,6 +5,18 @@
   </p>
 </div>
 
+<?php if (!empty($generated) && is_array($generated)): ?>
+  <section class="card">
+    <h3>初期アカウント情報</h3>
+    <p class="form-note">以下の情報は一度だけ表示されます。安全な手段で共有してください。</p>
+    <div class="code-block small">
+      <div>テナントUID: <?= $e((string)($generated['tenant_uid'] ?? '')) ?></div>
+      <div>管理者メール: <?= $e((string)($generated['admin_email'] ?? '')) ?></div>
+      <div>初期パスワード: <?= $e((string)($generated['initial_password'] ?? '')) ?></div>
+    </div>
+  </section>
+<?php endif; ?>
+
 <section class="card">
   <h3>テナント作成</h3>
   <form method="post" action="/platform/tenants/create" class="form">
@@ -14,8 +26,16 @@
       <input type="text" name="name" maxlength="255" required>
     </label>
     <label class="form-field">
-      <span>連絡先メールアドレス（任意）</span>
-      <input type="email" name="contactEmail" maxlength="254" autocomplete="email">
+      <span>連絡先メールアドレス</span>
+      <input type="email" name="contactEmail" maxlength="254" autocomplete="email" required>
+    </label>
+    <label class="form-field">
+      <span>管理者メールアドレス</span>
+      <input type="email" name="adminEmail" maxlength="254" autocomplete="email" required>
+    </label>
+    <label class="form-field">
+      <span>電話番号（任意）</span>
+      <input type="tel" name="contactPhone" maxlength="32" autocomplete="tel">
     </label>
     <label class="form-checkbox" style="margin-top:0;">
       <input type="checkbox" name="confirmed" value="yes" required>
@@ -34,13 +54,14 @@
           <th>テナント</th>
           <th>UID</th>
           <th>連絡先</th>
+          <th>登録日時</th>
           <th>ステータス</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($tenants)): ?>
-          <tr><td colspan="5">テナントはまだ登録されていません。</td></tr>
+          <tr><td colspan="6">テナントはまだ登録されていません。</td></tr>
         <?php else: ?>
           <?php foreach ($tenants as $tenant): ?>
             <?php
@@ -48,13 +69,23 @@
               $tenantName = trim((string)($tenant['name'] ?? ''));
               $tenantUid = trim((string)($tenant['tenant_uid'] ?? ''));
               $contact = trim((string)($tenant['contact_email'] ?? ''));
+              $contactPhone = trim((string)($tenant['contact_phone'] ?? ''));
+              $createdAt = trim((string)($tenant['created_at_display'] ?? ''));
               $status = (string)($tenant['status'] ?? 'active');
               $isActive = $status === 'active';
             ?>
             <tr>
               <td><?= $tenantName !== '' ? $e($tenantName) : '（名称未設定）' ?></td>
               <td><code><?= $e($tenantUid) ?></code></td>
-              <td><?= $contact !== '' ? $e($contact) : '—' ?></td>
+              <td>
+                <div class="user-cell">
+                  <span class="user-email"><?= $contact !== '' ? $e($contact) : '—' ?></span>
+                  <?php if ($contactPhone !== ''): ?>
+                    <span class="user-meta">TEL: <?= $e($contactPhone) ?></span>
+                  <?php endif; ?>
+                </div>
+              </td>
+              <td><?= $createdAt !== '' ? $e($createdAt) : '---' ?></td>
               <td>
                 <?php if ($isActive): ?>
                   <span class="status-badge success">稼働中</span>
@@ -121,16 +152,17 @@
     <table class="table">
       <thead>
         <tr>
-          <th>テナント管理者</th>
           <th>テナント</th>
+          <th>連絡/管理者メール</th>
           <th>MFA</th>
-          <th>最終リセット</th>
+          <th>リセット操作詳細</th>
+          <th>理由</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($tenantAdmins)): ?>
-          <tr><td colspan="5">テナント管理者はまだ登録されていません。</td></tr>
+          <tr><td colspan="6">テナント管理者はまだ登録されていません。</td></tr>
         <?php else: ?>
           <?php foreach ($tenantAdmins as $admin): ?>
             <?php
@@ -140,23 +172,36 @@
               $phone = trim((string)($admin['phoneNumber'] ?? ''));
               $tenantLabel = trim((string)($admin['tenantName'] ?? ''));
               $tenantUid = trim((string)($admin['tenantUid'] ?? ''));
+              $tenantContact = trim((string)($admin['tenantContactEmail'] ?? ''));
+              $tenantContactPhone = trim((string)($admin['tenantContactPhone'] ?? ''));
+              $tenantCreated = trim((string)($admin['tenantCreatedAt'] ?? ''));
+              $adminEmail = trim((string)($admin['email'] ?? ''));
               $canRollback = is_array($lastReset) && !empty($lastReset['id']) && !isset($lastReset['rolledBackAtDisplay']);
             ?>
             <tr>
               <td>
                 <div class="user-cell">
-                  <span class="user-name"><?= $e((string)($admin['username'] ?? '')) ?></span>
-                  <span class="user-email"><?= $e((string)($admin['email'] ?? '')) ?></span>
-                  <?php if ($phone !== ''): ?>
-                    <span class="user-meta">TEL: <?= $e($phone) ?></span>
+                  <span class="user-name"><?= $tenantLabel !== '' ? $e($tenantLabel) : '未設定' ?></span>
+                  <?php if ($tenantUid !== ''): ?>
+                    <span class="user-email"><code><?= $e($tenantUid) ?></code></span>
+                  <?php endif; ?>
+                  <?php if ($tenantCreated !== ''): ?>
+                    <span class="user-meta">登録: <?= $e($tenantCreated) ?></span>
                   <?php endif; ?>
                 </div>
               </td>
               <td>
                 <div class="user-cell">
-                  <span class="user-name"><?= $tenantLabel !== '' ? $e($tenantLabel) : '未設定' ?></span>
-                  <?php if ($tenantUid !== ''): ?>
-                    <span class="user-email"><code><?= $e($tenantUid) ?></code></span>
+                  <span class="user-name">管理者: <?= $e((string)($admin['username'] ?? '')) ?></span>
+                  <span class="user-email"><?= $adminEmail !== '' ? $e($adminEmail) : '-' ?></span>
+                  <?php if ($tenantContact !== '' && $tenantContact !== $adminEmail): ?>
+                    <span class="user-meta">連絡先: <?= $e($tenantContact) ?></span>
+                  <?php endif; ?>
+                  <?php if ($tenantContactPhone !== ''): ?>
+                    <span class="user-meta">連絡先TEL: <?= $e($tenantContactPhone) ?></span>
+                  <?php endif; ?>
+                  <?php if ($phone !== ''): ?>
+                    <span class="user-meta">管理者TEL: <?= $e($phone) ?></span>
                   <?php endif; ?>
                 </div>
               </td>
@@ -172,12 +217,20 @@
                   <span>リセット履歴はありません。</span>
                 <?php else: ?>
                   <div>最終リセット: <?= $e((string)($lastReset['createdAtDisplay'] ?? '---')) ?></div>
-                  <div class="muted">理由: <?= $e((string)($lastReset['reason'] ?? '---')) ?></div>
                   <?php if (!empty($lastReset['rolledBackAtDisplay'])): ?>
                     <div class="muted">
                       取消: <?= $e((string)$lastReset['rolledBackAtDisplay']) ?>
-                      （<?= $e((string)($lastReset['rollbackReason'] ?? '理由未記入')) ?>）
                     </div>
+                  <?php endif; ?>
+                <?php endif; ?>
+              </td>
+              <td>
+                <?php if (!is_array($lastReset)): ?>
+                  <span>---</span>
+                <?php else: ?>
+                  <div>理由: <?= $e((string)($lastReset['reason'] ?? '---')) ?></div>
+                  <?php if (!empty($lastReset['rolledBackAtDisplay'])): ?>
+                    <div class="muted">取消理由: <?= $e((string)($lastReset['rollbackReason'] ?? '理由未記入')) ?></div>
                   <?php endif; ?>
                 <?php endif; ?>
               </td>
@@ -190,6 +243,36 @@
                       class="form-inline table-action-form"
                     >
                       <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                      <div class="form-note">本人確認（いずれか2点一致）</div>
+                      <input
+                        type="email"
+                        name="verifyEmail"
+                        class="input-compact"
+                        placeholder="メールアドレス"
+                        maxlength="254"
+                      >
+                      <input
+                        type="text"
+                        name="verifyPhoneLast4"
+                        class="input-compact"
+                        placeholder="電話番号下4桁"
+                        maxlength="4"
+                        inputmode="numeric"
+                      >
+                      <input
+                        type="text"
+                        name="verifyRegisteredAt"
+                        class="input-compact"
+                        placeholder="登録日時 (YYYY-MM-DD)"
+                        maxlength="19"
+                      >
+                      <input
+                        type="text"
+                        name="verifyTenantUid"
+                        class="input-compact"
+                        placeholder="テナントUID"
+                        maxlength="64"
+                      >
                       <input
                         type="text"
                         name="reason"
@@ -219,6 +302,36 @@
                       >
                         <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
                         <input type="hidden" name="logId" value="<?= $e((string)$lastReset['id']) ?>">
+                        <div class="form-note">本人確認（いずれか2点一致）</div>
+                        <input
+                          type="email"
+                          name="verifyEmail"
+                          class="input-compact"
+                          placeholder="メールアドレス"
+                          maxlength="254"
+                        >
+                        <input
+                          type="text"
+                          name="verifyPhoneLast4"
+                          class="input-compact"
+                          placeholder="電話番号下4桁"
+                          maxlength="4"
+                          inputmode="numeric"
+                        >
+                        <input
+                          type="text"
+                          name="verifyRegisteredAt"
+                          class="input-compact"
+                          placeholder="登録日時 (YYYY-MM-DD)"
+                          maxlength="19"
+                        >
+                        <input
+                          type="text"
+                          name="verifyTenantUid"
+                          class="input-compact"
+                          placeholder="テナントUID"
+                          maxlength="64"
+                        >
                         <input
                           type="text"
                           name="rollbackReason"
