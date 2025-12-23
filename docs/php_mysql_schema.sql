@@ -5,9 +5,9 @@ SET NAMES utf8mb4;
 CREATE TABLE tenants (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   tenant_uid VARCHAR(64) NOT NULL,
-  name VARCHAR(255),
-  contact_email VARCHAR(255),
-  contact_phone VARCHAR(32),
+  name VARCHAR(512),
+  contact_email VARCHAR(512),
+  contact_phone VARCHAR(512),
   status VARCHAR(32) NOT NULL DEFAULT 'active',
   deactivated_at DATETIME(3),
   require_employee_email_verification TINYINT(1) NOT NULL DEFAULT 0,

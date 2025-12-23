@@ -60,7 +60,7 @@ final class MfaLoginController
         $emailMethod = $this->getEmailMethod($pending);
 
         if ($totpMethod === null && $emailMethod === null && !$this->repository->hasActiveRecoveryCodes((int)$pending['user']['id'])) {
-            Flash::add('error', '利用可能な多要素認証方法がありません。');
+            Flash::add('error', '利用可能な2FA方法がありません。');
             SessionAuth::clearPendingMfa();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -73,7 +73,7 @@ final class MfaLoginController
         $hasRecovery = $this->repository->hasActiveRecoveryCodes((int)$pending['user']['id']);
 
         $html = $this->view->renderWithLayout('login_mfa', [
-            'title' => '多要素認証',
+            'title' => '2FA認証',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => null,
@@ -103,7 +103,7 @@ final class MfaLoginController
         }
         $emailMethod = $this->getEmailMethod($pending);
         if ($emailMethod === null) {
-            Flash::add('error', '利用可能な多要素認証方法がありません。');
+            Flash::add('error', '利用可能な2FA方法がありません。');
             SessionAuth::clearPendingMfa();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -236,7 +236,7 @@ final class MfaLoginController
 
         $emailMethod = $this->getEmailMethod($pending);
         if ($emailMethod === null) {
-            Flash::add('error', '利用可能な多要素認証方法がありません。');
+            Flash::add('error', '利用可能な2FA方法がありません。');
             SessionAuth::clearPendingMfa();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }

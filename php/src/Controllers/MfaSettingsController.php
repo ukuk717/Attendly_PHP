@@ -61,7 +61,7 @@ final class MfaSettingsController
         }
 
         $html = $this->view->renderWithLayout('settings_mfa', [
-            'title' => '多要素認証の設定',
+            'title' => '2FA設定',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),

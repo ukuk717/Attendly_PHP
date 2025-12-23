@@ -38,6 +38,10 @@ final class RequireAuthMiddleware implements MiddlewareInterface
                 return $response->withHeader('Location', '/account');
             }
 
+            if ($this->shouldBypassPlatformMfa()) {
+                return $handler->handle($request);
+            }
+
             if (!$allowAccount && !$allowMfaSetup) {
                 try {
                     $repository = new Repository();
@@ -83,5 +87,16 @@ final class RequireAuthMiddleware implements MiddlewareInterface
     private function isAccountPath(string $path): bool
     {
         return $path === '/account' || str_starts_with($path, '/account/');
+    }
+
+    private function shouldBypassPlatformMfa(): bool
+    {
+        $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
+        if ($env === 'production') {
+            return false;
+        }
+        $raw = $_ENV['PLATFORM_ADMIN_2FA_BYPASS'] ?? '';
+        $enabled = filter_var($raw, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+        return $enabled === true;
     }
 }

@@ -19,13 +19,13 @@ final class Database
             throw new RuntimeException('pdo_mysql 拡張が有効ではありません。PHPに MySQL 用の PDO ドライバをインストール/有効化してください。');
         }
 
-        $host = $_ENV['DB_HOST'] ?? '127.0.0.1';
-        $port = (int)($_ENV['DB_PORT'] ?? 3306);
-        // デフォルトをローカル用サンプルに合わせる
-        $dbname = $_ENV['DB_NAME'] ?? 'attendly_local';
-        $user = $_ENV['DB_USER'] ?? 'attendly_local';
-        $password = $_ENV['DB_PASSWORD'] ?? 'local-password';
-        $charset = $_ENV['DB_CHARSET'] ?? 'utf8mb4';
+        $config = self::resolveConfig();
+        $host = $config['host'];
+        $port = $config['port'];
+        $dbname = $config['dbname'];
+        $user = $config['user'];
+        $password = $config['password'];
+        $charset = $config['charset'];
 
         if ($user === '' || $password === '') {
             throw new RuntimeException('.env の DB_USER / DB_PASSWORD が設定されていません。ローカル用の資格情報を設定してください。');
@@ -61,5 +61,53 @@ final class Database
         } catch (PDOException) {
             return false;
         }
+    }
+
+    /**
+     * @return array{host:string, port:int, dbname:string, user:string, password:string, charset:string}
+     */
+    private static function resolveConfig(): array
+    {
+        if (self::shouldUseTestDatabase()) {
+            $host = $_ENV['DB_TEST_HOST'] ?? '';
+            $port = (int)($_ENV['DB_TEST_PORT'] ?? 3306);
+            $dbname = $_ENV['DB_TEST_NAME'] ?? '';
+            $user = $_ENV['DB_TEST_USER'] ?? '';
+            $password = $_ENV['DB_TEST_PASSWORD'] ?? '';
+            $charset = $_ENV['DB_TEST_CHARSET'] ?? ($_ENV['DB_CHARSET'] ?? 'utf8mb4');
+
+            if ($host === '' || $dbname === '' || $user === '' || $password === '') {
+                throw new RuntimeException('APP_ENV=test かつ PLATFORM_ADMIN_2FA_BYPASS=true の場合は DB_TEST_* を必須設定してください。');
+            }
+
+            return [
+                'host' => $host,
+                'port' => $port,
+                'dbname' => $dbname,
+                'user' => $user,
+                'password' => $password,
+                'charset' => $charset,
+            ];
+        }
+
+        return [
+            'host' => $_ENV['DB_HOST'] ?? '127.0.0.1',
+            'port' => (int)($_ENV['DB_PORT'] ?? 3306),
+            'dbname' => $_ENV['DB_NAME'] ?? 'attendly_local',
+            'user' => $_ENV['DB_USER'] ?? 'attendly_local',
+            'password' => $_ENV['DB_PASSWORD'] ?? 'local-password',
+            'charset' => $_ENV['DB_CHARSET'] ?? 'utf8mb4',
+        ];
+    }
+
+    private static function shouldUseTestDatabase(): bool
+    {
+        $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
+        if ($env !== 'test') {
+            return false;
+        }
+        $raw = $_ENV['PLATFORM_ADMIN_2FA_BYPASS'] ?? '';
+        $enabled = filter_var($raw, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+        return $enabled === true;
     }
 }

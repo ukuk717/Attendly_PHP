@@ -1,7 +1,7 @@
 <div class="page-header">
   <h2>テナント管理</h2>
   <p class="form-note">
-    プラットフォーム管理者として、テナントの作成・停止/再開、およびテナント管理者のMFA（TOTP）リセット/取消を行います。
+    プラットフォーム管理者として、テナントの作成・停止/再開、およびテナント管理者の2FA（TOTP）リセット/取消を行います。
   </p>
 </div>
 
@@ -79,13 +79,13 @@
               <td><code><?= $e($tenantUid) ?></code></td>
               <td>
                 <div class="user-cell">
-                  <span class="user-email"><?= $contact !== '' ? $e($contact) : '—' ?></span>
+                  <span class="user-email"><?= $contact !== '' ? $e($contact) : '未設定' ?></span>
                   <?php if ($contactPhone !== ''): ?>
                     <span class="user-meta">TEL: <?= $e($contactPhone) ?></span>
                   <?php endif; ?>
                 </div>
               </td>
-              <td><?= $createdAt !== '' ? $e($createdAt) : '---' ?></td>
+              <td><?= $createdAt !== '' ? $e($createdAt) : '-' ?></td>
               <td>
                 <?php if ($isActive): ?>
                   <span class="status-badge success">稼働中</span>
@@ -146,7 +146,7 @@
 <?php endif; ?>
 
 <section class="card">
-  <h3>テナント管理者（MFAリセット/取消）</h3>
+  <h3>テナント管理者（2FAリセット/取消）</h3>
   <p class="form-note">監査ログは暗号化して保存されます。</p>
   <div class="table-responsive">
     <table class="table">
@@ -154,7 +154,7 @@
         <tr>
           <th>テナント</th>
           <th>連絡/管理者メール</th>
-          <th>MFA</th>
+          <th>2FA</th>
           <th>リセット操作詳細</th>
           <th>理由</th>
           <th>操作</th>
@@ -216,7 +216,7 @@
                 <?php if (!is_array($lastReset)): ?>
                   <span>リセット履歴はありません。</span>
                 <?php else: ?>
-                  <div>最終リセット: <?= $e((string)($lastReset['createdAtDisplay'] ?? '---')) ?></div>
+                  <div>最終リセット: <?= $e((string)($lastReset['createdAtDisplay'] ?? '-')) ?></div>
                   <?php if (!empty($lastReset['rolledBackAtDisplay'])): ?>
                     <div class="muted">
                       取消: <?= $e((string)$lastReset['rolledBackAtDisplay']) ?>
@@ -226,9 +226,9 @@
               </td>
               <td>
                 <?php if (!is_array($lastReset)): ?>
-                  <span>---</span>
+                  <span>-</span>
                 <?php else: ?>
-                  <div>理由: <?= $e((string)($lastReset['reason'] ?? '---')) ?></div>
+                  <div>理由: <?= $e((string)($lastReset['reason'] ?? '未設定')) ?></div>
                   <?php if (!empty($lastReset['rolledBackAtDisplay'])): ?>
                     <div class="muted">取消理由: <?= $e((string)($lastReset['rollbackReason'] ?? '理由未記入')) ?></div>
                   <?php endif; ?>

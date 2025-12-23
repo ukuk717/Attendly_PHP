@@ -25,7 +25,7 @@
     <table class="table">
       <thead>
         <tr>
-          <th>受給日</th>
+          <th>支給日</th>
           <th>送信日時</th>
           <th>従業員</th>
           <th>ファイル</th>

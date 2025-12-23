@@ -1,5 +1,5 @@
 <div class="page-header">
-  <h2>多要素認証の設定</h2>
+  <h2>2FA設定</h2>
   <p class="form-note">認証アプリ（OTP）とバックアップコードを設定してください。</p>
 </div>
 

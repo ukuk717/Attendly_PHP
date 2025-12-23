@@ -76,8 +76,8 @@
                 <a class="btn" href="/admin/role-codes/<?= $e((string)$item['id']) ?>/qr">ダウンロード</a>
               </td>
               <td class="table-text-nowrap"><?= $e((string)$item['usage_count']) ?></td>
-              <td class="table-text-nowrap"><?= $e($item['max_uses'] === null ? '—' : (string)$item['max_uses']) ?></td>
-              <td class="table-text-nowrap"><?= $item['expires_at'] ? $e($item['expires_at']->format('Y-m-d')) : $e('—') ?></td>
+              <td class="table-text-nowrap"><?= $e($item['max_uses'] === null ? '未設定' : (string)$item['max_uses']) ?></td>
+              <td class="table-text-nowrap"><?= $item['expires_at'] ? $e($item['expires_at']->format('Y-m-d')) : $e('未設定') ?></td>
               <td class="table-text-nowrap"><?= $e($item['is_disabled'] ? '無効' : '有効') ?></td>
               <td>
                 <?php if (!$item['is_disabled']): ?>
@@ -86,7 +86,7 @@
                     <button type="submit" class="btn secondary">無効化</button>
                   </form>
                 <?php else: ?>
-                  —
+                  -
                 <?php endif; ?>
               </td>
             </tr>

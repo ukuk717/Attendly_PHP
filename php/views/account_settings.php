@@ -61,7 +61,7 @@
 
 <section class="card">
   <h3>パスキー</h3>
-  <p class="form-note">パスキーでログインすると多要素認証は不要になります。対応端末・ブラウザでご利用ください。</p>
+  <p class="form-note">パスキーでログインすると2FAは不要になります。対応端末・ブラウザでご利用ください。</p>
   <p class="form-note">注意: 共有端末ではパスキーを登録しないでください。同一端末で複数アカウントのパスキー運用は想定していません。</p>
   <div class="form">
     <label class="form-field" for="passkey-label">

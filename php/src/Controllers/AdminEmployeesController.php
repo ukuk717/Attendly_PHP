@@ -101,12 +101,12 @@ final class AdminEmployeesController
             $this->repository->deleteRecoveryCodesByUser($employeeId);
             $this->repository->deleteTrustedDevicesByUser($employeeId);
         } catch (\Throwable) {
-            Flash::add('error', '多要素認証のリセットに失敗しました。');
+            Flash::add('error', '2FAのリセットに失敗しました。');
             return $response->withStatus(303)->withHeader('Location', '/dashboard');
         }
 
         $username = $employee['username'] ?? ('ID:' . (string)$employeeId);
-        Flash::add('success', sprintf('従業員「%s」の多要素認証をリセットしました。', $username));
+        Flash::add('success', sprintf('従業員「%s」の2FAをリセットしました。', $username));
         return $response->withStatus(303)->withHeader('Location', '/dashboard');
     }
 

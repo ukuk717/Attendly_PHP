@@ -168,7 +168,7 @@
                     method="post"
                     action="/admin/employees/<?= $e((string)$employee['id']) ?>/mfa/reset"
                     class="form-inline"
-                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の多要素認証をリセットします。よろしいですか？"
+                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の2FAをリセットします。よろしいですか？"
                   >
                     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
                     <button type="submit" class="btn secondary">2FAリセット</button>
@@ -228,7 +228,7 @@
                     method="post"
                     action="/admin/employees/<?= $e((string)$employee['id']) ?>/mfa/reset"
                     class="form-inline"
-                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の多要素認証をリセットします。よろしいですか？"
+                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の2FAをリセットします。よろしいですか？"
                   >
                     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
                     <button type="submit" class="btn">2FAリセット</button>

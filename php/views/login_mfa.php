@@ -1,5 +1,5 @@
 <div class="page-header">
-  <h2>多要素認証</h2>
+  <h2>2FA認証</h2>
   <?php if (!empty($email)): ?>
     <p class="form-note">対象アカウント: <code><?= $e($email) ?></code></p>
   <?php endif; ?>

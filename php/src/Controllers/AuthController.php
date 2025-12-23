@@ -129,7 +129,8 @@ final class AuthController
                 }
                 return $trustedResponse;
             }
-            $methods = $this->repository->listVerifiedMfaMethods((int)$result['user']['id']);
+            $skipPlatformMfa = $role === 'platform_admin' && $this->shouldBypassPlatformMfa();
+            $methods = $skipPlatformMfa ? [] : $this->repository->listVerifiedMfaMethods((int)$result['user']['id']);
             $pendingMethods = [];
             foreach ($methods as $method) {
                 if ($method['type'] === 'email_otp') {
@@ -163,7 +164,7 @@ final class AuthController
                     'methods' => $pendingMethods,
                     'force_password_change' => $forcePasswordChange,
                 ]);
-                Flash::add('info', '多要素認証を完了してください。');
+                Flash::add('info', '2FAを完了してください。');
                 return $response->withStatus(303)->withHeader('Location', '/login/mfa');
             }
 
@@ -367,5 +368,16 @@ final class AuthController
             $attrs[] = 'Secure';
         }
         return $response->withAddedHeader('Set-Cookie', implode('; ', $attrs));
+    }
+
+    private function shouldBypassPlatformMfa(): bool
+    {
+        $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
+        if ($env === 'production') {
+            return false;
+        }
+        $raw = $_ENV['PLATFORM_ADMIN_2FA_BYPASS'] ?? '';
+        $enabled = filter_var($raw, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+        return $enabled === true;
     }
 }
