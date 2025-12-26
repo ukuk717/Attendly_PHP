@@ -161,9 +161,9 @@
     </section>
 
     <section class="card">
-      <h2>テナント管理者の2FAサポート</h2>
+      <h2>テナント管理者の二段階認証サポート</h2>
       <p class="form-note">
-        テナント管理者本人からの依頼に基づき2FAをリセットできます。理由欄には本人確認方法やチケット番号などの証跡を必ず入力してください。
+        テナント管理者本人からの依頼に基づき二段階認証をリセットできます。理由欄には本人確認方法やチケット番号などの証跡を必ず入力してください。
         誤操作時は「直前のリセットを取消」からロールバックできます。
       </p>
       <div class="table-responsive">
@@ -172,7 +172,7 @@
             <tr>
               <th>管理者</th>
               <th>テナント</th>
-              <th>2FA状態</th>
+              <th>二段階認証状態</th>
               <th>最終操作</th>
               <th>操作</th>
             </tr>
@@ -241,9 +241,9 @@
                         <button
                           type="submit"
                           class="btn danger"
-                          data-confirm-message="テナント管理者の2FAをリセットします。よろしいですか？"
+                          data-confirm-message="テナント管理者の二段階認証をリセットします。よろしいですか？"
                         >
-                          2FAリセット
+                          二段階認証リセット
                         </button>
                       </form>
                       <% if (admin.lastReset && !admin.lastReset.rolledBackAtDisplay) { %>
@@ -265,7 +265,7 @@
                           <button
                             type="submit"
                             class="btn secondary"
-                            data-confirm-message="直前の2FAリセットを取り消します。よろしいですか？"
+                            data-confirm-message="直前の二段階認証リセットを取り消します。よろしいですか？"
                           >
                             直前のリセットを取消
                           </button>

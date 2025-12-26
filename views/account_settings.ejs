@@ -100,7 +100,7 @@
         </label>
         <% if (requireMfaForProfileChange && profileMfaOptions.length > 0) { %>
           <fieldset class="form-field">
-            <legend>2FA 認証</legend>
+            <legend>二段階認証</legend>
             <% profileMfaOptions.forEach(function(option, idx) { %>
               <label class="form-radio">
                 <input type="radio" name="mfaMethod" value="<%= option.value %>" <%= idx === 0 ? 'checked' : '' %>>
@@ -113,7 +113,7 @@
             </label>
           </fieldset>
         <% } else { %>
-          <p class="form-note">テナント管理者以外は 2FA なしで変更できます。</p>
+          <p class="form-note">テナント管理者以外は 二段階認証 なしで変更できます。</p>
         <% } %>
         <button type="submit" class="btn primary">確認コードを送信</button>
       </form>
@@ -176,7 +176,7 @@
     </section>
 
     <section class="card" id="mfa">
-      <h2>多要素認証（2FA）</h2>
+      <h2>多要素認証（二段階認証）</h2>
       <p class="section-subtitle">
         認証アプリ（TOTP）とメールワンタイムコードのどちらか、または両方を登録できます。
       </p>
@@ -205,7 +205,7 @@
 
       <% if (mfa.totp.isEnabled) { %>
         <% if (currentUser && currentUser.role === 'tenant_admin') { %>
-          <p class="form-note">テナント管理者は 2FA を必須にしています。無効化はできません。</p>
+          <p class="form-note">テナント管理者は 二段階認証 を必須にしています。無効化はできません。</p>
         <% } else { %>
           <form method="post" action="/settings/mfa/totp/disable" class="form-inline">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">

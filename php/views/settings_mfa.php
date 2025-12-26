@@ -1,5 +1,5 @@
 <div class="page-header">
-  <h2>2FA設定</h2>
+  <h2>二段階認証設定</h2>
   <p class="form-note">認証アプリ（OTP）とバックアップコードを設定してください。</p>
 </div>
 
@@ -26,7 +26,7 @@
         <button type="submit" class="btn secondary">セットアップをやり直す</button>
       </form>
     <?php elseif (!empty($pendingSecret)): ?>
-      <p class="form-note">認証アプリでQRコードを読み取り、<?= $e($totpDigits) ?>桁コードで確認してください。</p>
+      <p class="form-note">認証アプリでQRコードを読み取り、表示された認証コード（<?= $e($totpDigits) ?>桁）を入力して有効化してください。</p>
       <div class="mfa-setup">
         <div class="mfa-setup__qr">
           <?php if (!empty($totpQrSrc)): ?>
@@ -92,7 +92,10 @@
 
 <section class="card">
   <h3>信頼済みデバイス</h3>
-  <p class="form-note">現在のアカウントに紐づく信頼済みデバイスをすべて無効化できます。不明な端末を使用した場合や紛失時に実行してください。</p>
+  <p class="form-note">
+    二段階認証を有効にしている場合のみ利用されます。ログイン時に「このデバイスを信頼する」を選択した端末が対象です。
+    不明な端末を使用した場合や紛失時に、信頼済みデバイスをすべて無効化してください。
+  </p>
   <form method="post" action="/settings/mfa/trusted-devices/revoke" class="form" data-confirm-message="信頼済みデバイスをすべて無効化します。よろしいですか？">
     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
     <button type="submit" class="btn danger">信頼済みデバイスをすべて無効化</button>

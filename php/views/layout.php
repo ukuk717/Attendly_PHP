@@ -53,9 +53,6 @@
       <span class="menu-toggle__bar"></span>
     </button>
     <nav class="app-header__nav" id="primary-nav">
-      <?php if (!$isPlatformAccountNav): ?>
-        <a href="<?= $e($homeLink) ?>" class="nav-link">ホーム</a>
-      <?php endif; ?>
       <?php if ($isAuthed): ?>
         <?php if (!$isPlatformAccountNav): ?>
           <a href="/dashboard" class="nav-link">ダッシュボード</a>
@@ -71,7 +68,7 @@
           <a href="/payrolls" class="nav-link">給与明細</a>
         <?php endif; ?>
         <a href="/account" class="nav-link">アカウント設定</a>
-        <a href="/settings/mfa" class="nav-link">2FA設定</a>
+        <a href="/settings/mfa" class="nav-link">二段階認証設定</a>
         <span class="nav-user"><?= $e($displayName) ?></span>
         <form id="logout-form" method="post" action="/logout" class="nav-form">
           <input type="hidden" name="csrf_token" value="<?= $e($csrfToken) ?>">

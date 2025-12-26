@@ -126,7 +126,10 @@ function create_app(): \Slim\App
         $target = !empty($user) ? '/dashboard' : '/login';
         return $response->withStatus(303)->withHeader('Location', $target);
     });
-    $app->get('/status', $statusHandler);
+    $enableStatus = filter_var($_ENV['STATUS_ENDPOINT_ENABLED'] ?? false, FILTER_VALIDATE_BOOL);
+    if ($enableStatus) {
+        $app->get('/status', $statusHandler);
+    }
 
     $app->get('/web', function (ServerRequestInterface $request, ResponseInterface $response) use ($view): ResponseInterface {
         $html = $view->renderWithLayout('home', [
@@ -191,7 +194,7 @@ function create_app(): \Slim\App
     $app->get('/login/mfa', [$mfaLoginController, 'show']);
     $app->post('/login/mfa/email/send', [$mfaLoginController, 'sendEmail']);
     $app->post('/login/mfa', [$mfaLoginController, 'verify']);
-    $app->get('/login/mfa/cancel', [$mfaLoginController, 'cancel']);
+    $app->post('/login/mfa/cancel', [$mfaLoginController, 'cancel']);
 
     // Registration (placeholder: logic to be completed with DB writes + MFA)
     $registerController = new RegisterController($view);
@@ -269,8 +272,6 @@ function create_app(): \Slim\App
 
     $adminTenantSettings = new AdminTenantSettingsController();
     $app->post('/admin/settings/email-verification', [$adminTenantSettings, 'updateEmailVerification'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
-
-    $app->post('/admin/export', [$timesheetExport, 'exportMonthlyFromDashboard'])->add(new RequireAdminMiddleware())->add(new RequireAuthMiddleware());
 
     // Platform (tenant admin MFA reset/rollback)
     $platformTenants = new PlatformTenantsController($view);

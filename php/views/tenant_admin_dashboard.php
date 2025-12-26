@@ -51,12 +51,11 @@
           <th>月合計</th>
           <th>警告</th>
           <th>勤務記録訂正</th>
-          <th>出力</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($monthlySummary)): ?>
-          <tr><td colspan="5">従業員が登録されていません。</td></tr>
+          <tr><td colspan="4">従業員が登録されていません。</td></tr>
         <?php else: ?>
           <?php foreach ($monthlySummary as $row): ?>
             <?php $u = $row['user'] ?? []; ?>
@@ -71,8 +70,8 @@
                   <?php endif; ?>
                 </div>
               </td>
-              <td><?= $e((string)($row['formattedTotal'] ?? '0分')) ?></td>
-              <td>
+              <td class="table-text-nowrap"><?= $e((string)($row['formattedTotal'] ?? '0分')) ?></td>
+              <td class="table-text-nowrap">
                 <?php if ($shortageDays > 0): ?>
                   <div><span class="status-badge warning">休憩不足</span> <span class="muted"><?= $e((string)$shortageDays) ?>日</span></div>
                 <?php endif; ?>
@@ -87,24 +86,6 @@
                 <a class="btn secondary" href="/admin/employees/<?= $e((string)($u['id'] ?? 0)) ?>/sessions<?= $e($safeQueryString) ?>">
                   勤務記録訂正
                 </a>
-              </td>
-              <td>
-                <form method="post" action="/admin/export" class="inline-form" style="display:inline;">
-                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                  <input type="hidden" name="userId" value="<?= $e((string)($u['id'] ?? 0)) ?>">
-                  <input type="hidden" name="year" value="<?= $e((string)($targetYear ?? '')) ?>">
-                  <input type="hidden" name="month" value="<?= $e((string)($targetMonth ?? '')) ?>">
-                  <input type="hidden" name="format" value="excel">
-                  <button type="submit" class="btn secondary">Excel</button>
-                </form>
-                <form method="post" action="/admin/export" class="inline-form" style="display:inline; margin-left:4px;">
-                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                  <input type="hidden" name="userId" value="<?= $e((string)($u['id'] ?? 0)) ?>">
-                  <input type="hidden" name="year" value="<?= $e((string)($targetYear ?? '')) ?>">
-                  <input type="hidden" name="month" value="<?= $e((string)($targetMonth ?? '')) ?>">
-                  <input type="hidden" name="format" value="pdf">
-                  <button type="submit" class="btn secondary">PDF</button>
-                </form>
               </td>
             </tr>
           <?php endforeach; ?>
@@ -123,16 +104,17 @@
     <table class="table">
       <thead>
         <tr>
-          <th>従業員</th>
+          <th class="table-text-nowrap">従業員</th>
           <th>メール</th>
           <th>雇用区分</th>
           <th>状態</th>
-          <th>操作</th>
+          <th class="table-text-nowrap">アカウント操作</th>
+          <th class="table-text-nowrap">二段階認証</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($employeesActive)): ?>
-          <tr><td colspan="5">有効な従業員がいません。</td></tr>
+          <tr><td colspan="6">有効な従業員がいません。</td></tr>
         <?php else: ?>
           <?php foreach ($employeesActive as $employee): ?>
             <?php $email = trim((string)($employee['email'] ?? '')); ?>
@@ -148,32 +130,32 @@
                     <option value="part_time" <?= $employmentType === 'part_time' ? 'selected' : '' ?>>アルバイト/パート</option>
                     <option value="full_time" <?= $employmentType === 'full_time' ? 'selected' : '' ?>>社員</option>
                   </select>
-                  <button type="submit" class="btn">保存</button>
+                  <button type="submit" class="btn compact">保存</button>
                 </form>
               </td>
               <td><span class="status-badge success">有効</span></td>
               <td>
-                <div class="table-actions">
-                  <form
-                    method="post"
-                    action="/admin/employees/<?= $e((string)$employee['id']) ?>/status"
-                    class="form-inline"
-                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」のアカウントを無効化します。よろしいですか？"
-                  >
-                    <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                    <input type="hidden" name="action" value="deactivate">
-                    <button type="submit" class="btn danger">無効化</button>
-                  </form>
-                  <form
-                    method="post"
-                    action="/admin/employees/<?= $e((string)$employee['id']) ?>/mfa/reset"
-                    class="form-inline"
-                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の2FAをリセットします。よろしいですか？"
-                  >
-                    <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                    <button type="submit" class="btn secondary">2FAリセット</button>
-                  </form>
-                </div>
+                <form
+                  method="post"
+                  action="/admin/employees/<?= $e((string)$employee['id']) ?>/status"
+                  class="form-inline"
+                  data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」のアカウントを無効化します。よろしいですか？"
+                >
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <input type="hidden" name="action" value="deactivate">
+                  <button type="submit" class="btn danger">無効化</button>
+                </form>
+              </td>
+              <td>
+                <form
+                  method="post"
+                  action="/admin/employees/<?= $e((string)$employee['id']) ?>/mfa/reset"
+                  class="form-inline"
+                  data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の二段階認証をリセットします。この操作は、従業員がログインできない場合にのみ実行してください。"
+                >
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <button type="submit" class="btn secondary">二段階認証リセット</button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>
@@ -187,16 +169,17 @@
     <table class="table">
       <thead>
         <tr>
-          <th>従業員</th>
+          <th class="table-text-nowrap">従業員</th>
           <th>メール</th>
           <th>雇用区分</th>
-          <th>最終更新</th>
-          <th>操作</th>
+          <th class="table-text-nowrap">最終更新</th>
+          <th class="table-text-nowrap">アカウント操作</th>
+          <th class="table-text-nowrap">二段階認証</th>
         </tr>
       </thead>
       <tbody>
         <?php if (empty($employeesInactive)): ?>
-          <tr><td colspan="5">無効化された従業員はいません。</td></tr>
+          <tr><td colspan="6">無効化された従業員はいません。</td></tr>
         <?php else: ?>
           <?php foreach ($employeesInactive as $employee): ?>
             <?php $email = trim((string)($employee['email'] ?? '')); ?>
@@ -213,27 +196,27 @@
                     <option value="part_time" <?= $employmentType === 'part_time' ? 'selected' : '' ?>>アルバイト/パート</option>
                     <option value="full_time" <?= $employmentType === 'full_time' ? 'selected' : '' ?>>社員</option>
                   </select>
-                  <button type="submit" class="btn">保存</button>
+                  <button type="submit" class="btn compact">保存</button>
                 </form>
               </td>
-              <td><?= $deactivated !== '' ? $e($deactivated) : '-' ?></td>
+              <td class="table-text-nowrap"><?= $deactivated !== '' ? $e($deactivated) : '-' ?></td>
               <td>
-                <div class="table-actions">
-                  <form method="post" action="/admin/employees/<?= $e((string)$employee['id']) ?>/status" class="form-inline">
-                    <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                    <input type="hidden" name="action" value="activate">
-                    <button type="submit" class="btn secondary">再有効化</button>
-                  </form>
-                  <form
-                    method="post"
-                    action="/admin/employees/<?= $e((string)$employee['id']) ?>/mfa/reset"
-                    class="form-inline"
-                    data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の2FAをリセットします。よろしいですか？"
-                  >
-                    <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                    <button type="submit" class="btn">2FAリセット</button>
-                  </form>
-                </div>
+                <form method="post" action="/admin/employees/<?= $e((string)$employee['id']) ?>/status" class="form-inline">
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <input type="hidden" name="action" value="activate">
+                  <button type="submit" class="btn secondary">再有効化</button>
+                </form>
+              </td>
+              <td>
+                <form
+                  method="post"
+                  action="/admin/employees/<?= $e((string)$employee['id']) ?>/mfa/reset"
+                  class="form-inline"
+                  data-confirm-message="従業員「<?= $e((string)$employee['username']) ?>」の二段階認証をリセットします。この操作は、従業員がログインできない場合にのみ実行してください。"
+                >
+                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                  <button type="submit" class="btn secondary">二段階認証リセット</button>
+                </form>
               </td>
             </tr>
           <?php endforeach; ?>

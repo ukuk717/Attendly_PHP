@@ -164,7 +164,7 @@ final class AuthController
                     'methods' => $pendingMethods,
                     'force_password_change' => $forcePasswordChange,
                 ]);
-                Flash::add('info', '2FAを完了してください。');
+                Flash::add('info', '二段階認証を完了してください。');
                 return $response->withStatus(303)->withHeader('Location', '/login/mfa');
             }
 
@@ -238,7 +238,6 @@ final class AuthController
             session_regenerate_id(true);
         }
         Flash::add('success', 'ログアウトしました。');
-        $response = $this->clearTrustCookie($response);
         return $response
             ->withStatus(303)
             ->withHeader('Location', '/login');

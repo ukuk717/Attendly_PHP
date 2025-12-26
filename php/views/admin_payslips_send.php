@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>給与明細送信</h2>
-  <p class="form-note">従業員に給与明細の署名URLを通知します。</p>
+  <p class="form-note">送信すると、従業員が給与明細画面からダウンロードできるようになります。</p>
 </div>
 
 <section class="card">
@@ -42,7 +42,7 @@
       <label for="payslip_file">給与明細ファイル（任意・PDF）</label>
       <input type="file" name="payslip_file" id="payslip_file" accept="application/pdf,.pdf">
       <p class="form-note">
-        PDFを添付すると、署名URLからダウンロードできるようになります（メールへの添付は行いません）。
+        PDFを添付すると、従業員が給与明細画面からダウンロードできます（メールへの添付は行いません）。
         最大 <?= $e((string)($maxUploadMb ?? 10)) ?>MB。
       </p>
     </div>

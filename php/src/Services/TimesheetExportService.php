@@ -133,6 +133,8 @@ final class TimesheetExportService
         foreach ($rows as $row) {
             $start = $row['start_time']->setTimezone($targetTz);
             $end = $row['end_time']?->setTimezone($targetTz);
+            $startOutput = $this->sanitizeCsvValue($start->format('Y-m-d H:i:s'));
+            $endOutput = $end !== null ? $this->sanitizeCsvValue($end->format('Y-m-d H:i:s')) : '';
             $durationMinutes = null;
             $breakMinutes = null;
             $breakMinutesOutput = null;
@@ -168,11 +170,11 @@ final class TimesheetExportService
             }
             $file->fputcsv([
                 $row['user_id'],
-                $row['email'],
-                $row['last_name'],
-                $row['first_name'],
-                $start->format('Y-m-d H:i:s'),
-                $end?->format('Y-m-d H:i:s'),
+                $this->sanitizeCsvValue((string)$row['email']),
+                $this->sanitizeCsvValue((string)($row['last_name'] ?? '')),
+                $this->sanitizeCsvValue((string)($row['first_name'] ?? '')),
+                $startOutput,
+                $endOutput,
                 $breakMinutesOutput,
                 $durationMinutes,
                 $netMinutes,
@@ -554,5 +556,17 @@ final class TimesheetExportService
             return "{$rest}分";
         }
         return sprintf('%d時間%02d分', $hours, $rest);
+    }
+
+    private function sanitizeCsvValue(string $value): string
+    {
+        if ($value === '') {
+            return '';
+        }
+        $trimmed = ltrim($value, " \t\r\n");
+        if ($trimmed !== '' && in_array($trimmed[0], ['=', '+', '-', '@'], true)) {
+            return "'" . $value;
+        }
+        return $value;
     }
 }

@@ -8,6 +8,7 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Slim\Psr7\Response;
 
 final class HostValidationMiddleware implements MiddlewareInterface
 {
@@ -31,15 +32,15 @@ final class HostValidationMiddleware implements MiddlewareInterface
 
         $host = $request->getUri()->getHost();
         if ($host === '' || !in_array($host, $this->allowedHosts, true)) {
-            $response = $handler->handle($request);
-            return $this->deny($response, $host);
+            return $this->deny($host);
         }
 
         return $handler->handle($request);
     }
 
-    private function deny(ResponseInterface $response, string $host): ResponseInterface
+    private function deny(string $host): ResponseInterface
     {
+        $response = new Response();
         $payload = [
             'error' => 'invalid_host',
             'host' => $host,

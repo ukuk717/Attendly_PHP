@@ -1,5 +1,5 @@
 <div class="page-header">
-  <h2>2FA認証</h2>
+  <h2>二段階認証</h2>
   <?php if (!empty($email)): ?>
     <p class="form-note">対象アカウント: <code><?= $e($email) ?></code></p>
   <?php endif; ?>
@@ -123,7 +123,10 @@
   <?php endif; ?>
 
   <div class="form-links">
-    <a class="link" href="/login/mfa/cancel">ログインをやり直す</a>
+    <form method="post" action="/login/mfa/cancel" class="form-inline">
+      <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+      <button type="submit" class="btn link">ログインをやり直す</button>
+    </form>
   </div>
 </section>
 <script src="/mfa_login.js" defer></script>

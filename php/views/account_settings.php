@@ -61,7 +61,7 @@
 
 <section class="card">
   <h3>パスキー</h3>
-  <p class="form-note">パスキーでログインすると2FAは不要になります。対応端末・ブラウザでご利用ください。</p>
+  <p class="form-note">パスキーでログインすると二段階認証は不要になります。対応端末・ブラウザでご利用ください。</p>
   <p class="form-note">注意: 共有端末ではパスキーを登録しないでください。同一端末で複数アカウントのパスキー運用は想定していません。</p>
   <div class="form">
     <label class="form-field" for="passkey-label">
@@ -103,7 +103,7 @@
 
 <section class="card">
   <h3>ログインセッション</h3>
-  <p class="form-note">ログイン端末と日時を確認できます（IPは表示せず、サーバーログに記録されます）。</p>
+  <p class="form-note">ログイン端末と日時を確認できます（直近3件まで表示、IPは表示せずサーバーログに記録されます）。</p>
   <?php if (empty($loginSessions ?? [])): ?>
     <p class="form-note">セッション情報がありません。</p>
   <?php else: ?>

@@ -66,6 +66,15 @@ function attendly_handle_request(): void
     }
 
     if ($uri === '/' || $uri === '/status') {
+        if ($uri === '/status') {
+            $enableStatus = filter_var($_ENV['STATUS_ENDPOINT_ENABLED'] ?? false, FILTER_VALIDATE_BOOL);
+            if (!$enableStatus) {
+                http_response_code(404);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['error' => 'not_found']);
+                return;
+            }
+        }
         $dbStatus = attendly_status_database();
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode([
@@ -95,9 +104,13 @@ function attendly_status_database(): array
             'status' => $alive ? 'ok' : 'fail',
         ];
     } catch (Throwable $e) {
-        return [
+        $payload = [
             'status' => 'fail',
-            'error' => $e->getMessage(),
         ];
+        $debug = filter_var($_ENV['APP_DEBUG'] ?? false, FILTER_VALIDATE_BOOL);
+        if ($debug) {
+            $payload['error'] = $e->getMessage();
+        }
+        return $payload;
     }
 }

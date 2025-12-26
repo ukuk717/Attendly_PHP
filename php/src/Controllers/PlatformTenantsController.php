@@ -321,11 +321,11 @@ final class PlatformTenantsController
             $this->repository->commit();
         } catch (\Throwable) {
             $this->repository->rollback();
-            Flash::add('error', '2FAリセットに失敗しました。時間をおいて再度お試しください。');
+            Flash::add('error', '二段階認証リセットに失敗しました。時間をおいて再度お試しください。');
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
 
-        Flash::add('success', sprintf('テナント管理者「%s」の2FAをリセットしました。', (string)$tenantAdmin['username']));
+        Flash::add('success', sprintf('テナント管理者「%s」の二段階認証をリセットしました。', (string)$tenantAdmin['username']));
         return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
     }
 
@@ -377,7 +377,7 @@ final class PlatformTenantsController
 
         $currentMethod = $this->repository->findVerifiedMfaMethodByType($tenantAdmin['id'], 'totp');
         if ($currentMethod !== null) {
-            Flash::add('error', '現在2FAが再設定されているため、取り消しできません。');
+            Flash::add('error', '現在二段階認証が再設定されているため、取り消しできません。');
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
 
@@ -414,7 +414,7 @@ final class PlatformTenantsController
             return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
         }
 
-        Flash::add('success', sprintf('テナント管理者「%s」の直前の2FAリセットを取り消しました。', (string)$tenantAdmin['username']));
+        Flash::add('success', sprintf('テナント管理者「%s」の直前の二段階認証リセットを取り消しました。', (string)$tenantAdmin['username']));
         return $response->withStatus(303)->withHeader('Location', '/platform/tenants');
     }
 

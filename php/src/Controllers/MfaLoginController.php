@@ -60,7 +60,7 @@ final class MfaLoginController
         $emailMethod = $this->getEmailMethod($pending);
 
         if ($totpMethod === null && $emailMethod === null && !$this->repository->hasActiveRecoveryCodes((int)$pending['user']['id'])) {
-            Flash::add('error', '利用可能な2FA方法がありません。');
+            Flash::add('error', '利用可能な二段階認証の方法がありません。');
             SessionAuth::clearPendingMfa();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -73,7 +73,7 @@ final class MfaLoginController
         $hasRecovery = $this->repository->hasActiveRecoveryCodes((int)$pending['user']['id']);
 
         $html = $this->view->renderWithLayout('login_mfa', [
-            'title' => '2FA認証',
+            'title' => '二段階認証',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => null,
@@ -103,7 +103,7 @@ final class MfaLoginController
         }
         $emailMethod = $this->getEmailMethod($pending);
         if ($emailMethod === null) {
-            Flash::add('error', '利用可能な2FA方法がありません。');
+            Flash::add('error', '利用可能な二段階認証の方法がありません。');
             SessionAuth::clearPendingMfa();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -236,7 +236,7 @@ final class MfaLoginController
 
         $emailMethod = $this->getEmailMethod($pending);
         if ($emailMethod === null) {
-            Flash::add('error', '利用可能な2FA方法がありません。');
+            Flash::add('error', '利用可能な二段階認証の方法がありません。');
             SessionAuth::clearPendingMfa();
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
@@ -284,6 +284,11 @@ final class MfaLoginController
             }
             Flash::add('info', 'ログインからやり直してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        $data = (array)$request->getParsedBody();
+        if (empty($data['csrf_token']) || !hash_equals(CsrfToken::getToken(), (string)$data['csrf_token'])) {
+            Flash::add('error', 'CSRFトークンが無効です。');
+            return $response->withStatus(303)->withHeader('Location', '/login/mfa');
         }
         SessionAuth::clearPendingMfa();
         Flash::add('info', 'ログインを中断しました。再度ログインしてください。');
@@ -496,7 +501,7 @@ final class MfaLoginController
                 $this->repository->createTrustedDevice((int)$pending['user']['id'], $hash, $deviceInfo, $expires);
             }
             $cookie = $this->buildTrustCookie($token, $expires);
-            $response = $response->withHeader('Set-Cookie', $cookie);
+            $response = $response->withAddedHeader('Set-Cookie', $cookie);
         }
         if ($forcePasswordChange) {
             Flash::add('error', 'プラットフォーム管理者のパスワードを更新してください。');

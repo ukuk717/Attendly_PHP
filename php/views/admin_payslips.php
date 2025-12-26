@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>給与明細管理</h2>
-  <p class="form-note">送信済み給与明細の一覧・再送・署名URLによるダウンロードができます。</p>
+  <p class="form-note">送信済み給与明細の一覧・再送・ダウンロードリンクの発行ができます。</p>
   <p><a class="btn link" href="/admin/payslips/send">給与明細を送信する</a></p>
 </div>
 
@@ -25,11 +25,11 @@
     <table class="table">
       <thead>
         <tr>
-          <th>支給日</th>
-          <th>送信日時</th>
+          <th class="table-text-nowrap">支給日</th>
+          <th class="table-text-nowrap">送信日時</th>
           <th>従業員</th>
           <th>ファイル</th>
-          <th>受領</th>
+          <th class="table-text-nowrap">受領</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -39,8 +39,8 @@
         <?php else: ?>
           <?php foreach ($items as $row): ?>
             <tr>
-              <td><?= $e((string)($row['sent_on'] ?? '')) ?></td>
-              <td><?= $e((string)($row['sent_at'] ?? '')) ?></td>
+              <td class="table-text-nowrap"><?= $e((string)($row['sent_on'] ?? '')) ?></td>
+              <td class="table-text-nowrap"><?= $e((string)($row['sent_at'] ?? '')) ?></td>
               <td><?= $e((string)($row['employee_label'] ?? '')) ?></td>
               <td>
                 <?= $e((string)($row['file_name'] ?? '')) ?>
@@ -48,7 +48,7 @@
                   <span class="muted">(<?= $e((string)number_format((int)$row['file_size'])) ?> bytes)</span>
                 <?php endif; ?>
               </td>
-              <td>
+              <td class="table-text-nowrap">
                 <?php if (!empty($row['downloaded_at'])): ?>
                   <?= $e((string)$row['downloaded_at']) ?>
                 <?php else: ?>
@@ -56,7 +56,7 @@
                 <?php endif; ?>
               </td>
               <td>
-                <a class="btn link" href="/admin/payslips/<?= $e((string)$row['id']) ?>/download">署名URLでダウンロード</a>
+                <a class="btn link" href="/admin/payslips/<?= $e((string)$row['id']) ?>/download">ダウンロードリンクを開く</a>
                 <form method="post" action="/admin/payslips/<?= $e((string)$row['id']) ?>/resend" class="form-inline" style="display:inline-flex; gap: 6px; margin-left: 6px;">
                   <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
                   <input type="hidden" name="return_to" value="<?= $e((string)($returnTo ?? '/admin/payslips')) ?>">

@@ -101,7 +101,7 @@ final class AccountController
         $loginSessions = [];
         $currentSessionId = $this->getCurrentLoginSessionId($user['id']);
         try {
-            $rows = $this->repository->listLoginSessionsByUser($user['id'], 20);
+            $rows = $this->repository->listLoginSessionsByUser($user['id'], 3);
             foreach ($rows as $row) {
                 $loginAt = $row['login_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i');
                 $revokedAt = $row['revoked_at'] instanceof \DateTimeImmutable

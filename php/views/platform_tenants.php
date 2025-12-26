@@ -1,7 +1,7 @@
 <div class="page-header">
   <h2>テナント管理</h2>
   <p class="form-note">
-    プラットフォーム管理者として、テナントの作成・停止/再開、およびテナント管理者の2FA（TOTP）リセット/取消を行います。
+    プラットフォーム管理者として、テナントの作成・停止/再開、およびテナント管理者の二段階認証（TOTP）リセット/取消を行います。
   </p>
 </div>
 
@@ -146,7 +146,7 @@
 <?php endif; ?>
 
 <section class="card">
-  <h3>テナント管理者（2FAリセット/取消）</h3>
+  <h3>テナント管理者（二段階認証リセット/取消）</h3>
   <p class="form-note">監査ログは暗号化して保存されます。</p>
   <div class="table-responsive">
     <table class="table">
@@ -154,7 +154,7 @@
         <tr>
           <th>テナント</th>
           <th>連絡/管理者メール</th>
-          <th>2FA</th>
+          <th>二段階認証</th>
           <th>リセット操作詳細</th>
           <th>理由</th>
           <th>操作</th>
@@ -288,9 +288,9 @@
                       <button
                         type="submit"
                         class="btn danger"
-                        data-confirm-message="テナント管理者の2FAをリセットします。よろしいですか？"
+                        data-confirm-message="テナント管理者の二段階認証をリセットします。よろしいですか？"
                       >
-                        2FAリセット
+                        二段階認証リセット
                       </button>
                     </form>
 
@@ -343,7 +343,7 @@
                         <button
                           type="submit"
                           class="btn secondary"
-                          data-confirm-message="直前の2FAリセットを取り消します。よろしいですか？"
+                          data-confirm-message="直前の二段階認証リセットを取り消します。よろしいですか？"
                         >
                           直前のリセットを取消
                         </button>

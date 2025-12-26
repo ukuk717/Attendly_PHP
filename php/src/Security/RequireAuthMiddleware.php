@@ -49,14 +49,14 @@ final class RequireAuthMiddleware implements MiddlewareInterface
                 } catch (\Throwable) {
                     SessionAuth::clear();
                     if (!Flash::hasType('error')) {
-                        Flash::add('error', '2FA設定の確認に失敗しました。再度ログインしてください。');
+                        Flash::add('error', '二段階認証設定の確認に失敗しました。再度ログインしてください。');
                     }
                     $response = new Response(303);
                     return $response->withHeader('Location', '/login');
                 }
                 if ($totp === null) {
                     if (!Flash::hasType('error')) {
-                        Flash::add('error', 'プラットフォーム管理者は2FAの設定が必須です。');
+                        Flash::add('error', 'プラットフォーム管理者は二段階認証の設定が必須です。');
                     }
                     $response = new Response(303);
                     return $response->withHeader('Location', '/settings/mfa');

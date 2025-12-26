@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>勤怠エクスポート</h2>
-  <p class="form-note">期間と従業員を指定して勤怠データを署名URL経由でダウンロードします。</p>
+  <p class="form-note">期間と従業員を指定して勤怠データをダウンロードします。</p>
 </div>
 
 <section class="card">
@@ -43,6 +43,6 @@
         <option value="pdf">PDF</option>
       </select>
     </div>
-    <button type="submit" class="btn primary">署名URLでダウンロード</button>
+    <button type="submit" class="btn primary">ダウンロードする</button>
   </form>
 </section>

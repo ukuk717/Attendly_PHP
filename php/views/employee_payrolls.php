@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>給与明細</h2>
-  <p class="form-note">受信済みの明細を署名URLから確認できます。</p>
+  <p class="form-note">受信済みの明細をダウンロードできます。</p>
 </div>
 
 <section class="card">
@@ -8,8 +8,8 @@
     <table class="table">
       <thead>
         <tr>
-          <th>支給日</th>
-          <th>送信日時</th>
+          <th class="table-text-nowrap">支給日</th>
+          <th class="table-text-nowrap">送信日時</th>
           <th>操作</th>
         </tr>
       </thead>
@@ -19,9 +19,9 @@
         <?php else: ?>
           <?php foreach ($items as $row): ?>
             <tr>
-              <td><?= $e($row['sent_on']) ?></td>
-              <td><?= $e($row['sent_at']) ?></td>
-              <td><a class="btn link" href="/payrolls/<?= $e((string)$row['id']) ?>/download">署名URLでダウンロード</a></td>
+              <td class="table-text-nowrap"><?= $e($row['sent_on']) ?></td>
+              <td class="table-text-nowrap"><?= $e($row['sent_at']) ?></td>
+              <td><a class="btn link" href="/payrolls/<?= $e((string)$row['id']) ?>/download">明細をダウンロード</a></td>
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>

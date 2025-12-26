@@ -289,6 +289,11 @@ body.menu-open {
   color: var(--primary);
 }
 
+.btn.compact {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.9rem;
+}
+
 .btn.link {
   background: transparent;
   color: var(--primary);
@@ -446,6 +451,12 @@ body.menu-open {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+
+.table-actions .btn,
+.table-action-form .btn {
+  padding: 0.45rem 1.05rem;
+  font-size: 0.9rem;
 }
 
 .input-compact {
