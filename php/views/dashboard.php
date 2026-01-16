@@ -3,6 +3,32 @@
   <p class="form-note">タイムゾーン: <?= $e($timezone ?? 'Asia/Tokyo') ?></p>
 </div>
 
+<?php
+  $passkeyReco = is_array($passkeyRecommendation ?? null) ? $passkeyRecommendation : [];
+  $passkeyUserId = (int)($passkeyReco['userId'] ?? 0);
+  $passkeyHas = !empty($passkeyReco['hasPasskey']);
+?>
+<?php if ($passkeyUserId > 0 && !$passkeyHas): ?>
+  <section
+    class="card highlight-card passkey-recommendation"
+    data-passkey-recommendation
+    data-user-id="<?= $e((string)$passkeyUserId) ?>"
+    data-has-passkey="<?= $passkeyHas ? '1' : '0' ?>"
+  >
+    <h3>パスキーの利用をおすすめします</h3>
+    <p class="form-note">パスキーならパスワード入力や二段階認証が不要になり、より安全にログインできます。</p>
+    <p class="form-note">共有端末では登録しないでください。</p>
+    <div class="form-actions">
+      <a class="btn primary" href="/account#passkeys">パスキーを登録する</a>
+      <button type="button" class="btn secondary" data-passkey-dismiss>あとで</button>
+    </div>
+  </section>
+<?php endif; ?>
+
+<?php if (isset($announcementBox)): ?>
+  <?php include __DIR__ . '/_partials/announcements_box.php'; ?>
+<?php endif; ?>
+
 <section class="card">
   <h3>ワンクリック打刻</h3>
   <p class="status-row">
@@ -124,3 +150,5 @@
     </table>
   </div>
 </section>
+
+<script src="/passkeys.js" defer></script>

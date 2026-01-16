@@ -4,6 +4,41 @@
   const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
   const secureAllowed = isSecureContext || isLocalhost;
   const PASSKEY_TIMEOUT_MS = 15000;
+  const PASSKEY_PROMPT_HIDE_MS = 30 * 24 * 60 * 60 * 1000;
+
+  const recommendationCard = document.querySelector('[data-passkey-recommendation]');
+  if (recommendationCard) {
+    const userId = recommendationCard.getAttribute('data-user-id') || '0';
+    const hasPasskey = recommendationCard.getAttribute('data-has-passkey') === '1';
+    const dismissButton = recommendationCard.querySelector('[data-passkey-dismiss]');
+    const removeCard = () => {
+      recommendationCard.remove();
+    };
+
+    if (hasPasskey || !supportsPasskey || !secureAllowed) {
+      removeCard();
+    } else {
+      let dismissedAt = 0;
+      try {
+        const raw = window.localStorage.getItem(`passkey_prompt_dismissed_${userId}`);
+        dismissedAt = raw ? parseInt(raw, 10) : 0;
+      } catch (_) {
+        dismissedAt = 0;
+      }
+      if (dismissedAt && Number.isFinite(dismissedAt) && Date.now() - dismissedAt < PASSKEY_PROMPT_HIDE_MS) {
+        removeCard();
+      } else if (dismissButton) {
+        dismissButton.addEventListener('click', () => {
+          try {
+            window.localStorage.setItem(`passkey_prompt_dismissed_${userId}`, String(Date.now()));
+          } catch (_) {
+            // ignore storage failures
+          }
+          removeCard();
+        });
+      }
+    }
+  }
 
   const statusEls = document.querySelectorAll('[data-passkey-status]');
   const setStatus = (message, type = '') => {

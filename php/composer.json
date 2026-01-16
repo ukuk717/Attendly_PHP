@@ -14,7 +14,8 @@
     "chillerlan/php-qrcode": "^5.0",
     "tecnickcom/tcpdf": "^6.10",
     "maennchen/zipstream-php": "^3.0",
-    "lbuchs/webauthn": "^2.0"
+    "lbuchs/webauthn": "^2.0",
+    "league/commonmark": "2.7"
   },
   "autoload": {
     "psr-4": {

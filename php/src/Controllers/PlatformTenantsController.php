@@ -10,6 +10,7 @@ use Attendly\Security\SensitiveLogPayload;
 use Attendly\Support\AppTime;
 use Attendly\Support\Flash;
 use Attendly\Support\PasswordHasher;
+use Attendly\Services\AnnouncementService;
 use Attendly\View;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -19,12 +20,14 @@ final class PlatformTenantsController
     private Repository $repository;
     private int $tenantsPerPage;
     private int $adminsPerPage;
+    private AnnouncementService $announcements;
 
     public function __construct(private View $view, ?Repository $repository = null)
     {
         $this->repository = $repository ?? new Repository();
-        $this->tenantsPerPage = 100;
+        $this->tenantsPerPage = 5;
         $this->adminsPerPage = 200;
+        $this->announcements = new AnnouncementService($this->repository);
     }
 
     public function show(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -34,12 +37,13 @@ final class PlatformTenantsController
         $query = $request->getQueryParams();
         $tenantPage = $this->sanitizePage($query['tenants_page'] ?? 1);
         $adminsPage = $this->sanitizePage($query['admins_page'] ?? ($query['page'] ?? 1));
+        $tenantSearch = $this->sanitizeSearchTerm($query['tenant_search'] ?? '');
 
         $tenantsOffset = ($tenantPage - 1) * $this->tenantsPerPage;
         $adminsOffset = ($adminsPage - 1) * $this->adminsPerPage;
 
-        $tenantTotal = $this->repository->countTenantsForPlatform();
-        $tenantRows = $this->repository->listTenantsForPlatform($this->tenantsPerPage, $tenantsOffset);
+        $tenantTotal = $this->repository->countTenantsForPlatform($tenantSearch);
+        $tenantRows = $this->repository->listTenantsForPlatform($this->tenantsPerPage, $tenantsOffset, $tenantSearch);
         $tenants = array_map(static function (array $tenant): array {
             $createdAt = $tenant['created_at'] instanceof \DateTimeImmutable
                 ? $tenant['created_at']->setTimezone(AppTime::timezone())->format('Y-m-d H:i')
@@ -104,19 +108,25 @@ final class PlatformTenantsController
         if (isset($_SESSION['generated_tenant_credential'])) {
             unset($_SESSION['generated_tenant_credential']);
         }
+        $announcementBox = $this->announcements->listForUser((int)$platform['id'], 5);
+        $announcementModal = $this->consumeLoginAnnouncements((int)$platform['id']);
 
         $html = $this->view->renderWithLayout('platform_tenants', [
             'title' => 'テナント管理',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'currentPath' => $request->getUri()->getPath(),
             'brandName' => $_ENV['APP_BRAND_NAME'] ?? 'Attendly',
             'platformUser' => $platform,
             'tenants' => $tenants,
             'tenantsPagination' => $tenantsPagination,
+            'tenantSearch' => $tenantSearch,
             'tenantAdmins' => $rows,
             'adminsPagination' => $adminsPagination,
             'generated' => is_array($generated) ? $generated : null,
+            'announcementBox' => $announcementBox,
+            'announcementModal' => $announcementModal,
         ], 'platform_layout');
 
         $response->getBody()->write($html);
@@ -441,6 +451,18 @@ final class PlatformTenantsController
     }
 
     /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function consumeLoginAnnouncements(int $userId): array
+    {
+        if (empty($_SESSION['show_login_announcements'])) {
+            return [];
+        }
+        unset($_SESSION['show_login_announcements']);
+        return $this->announcements->listForLoginModal($userId, 3);
+    }
+
+    /**
      * @param array{id:int,reason:string,created_at:\DateTimeImmutable,rolled_back_at:?\\DateTimeImmutable,rollback_reason:?string}|null $log
      * @return array{id:int,reason:string,createdAtDisplay:string,rolledBackAtDisplay:?string,rollbackReason:?string}|null
      */
@@ -467,6 +489,16 @@ final class PlatformTenantsController
             $page = 1;
         }
         return max(1, (int)$page);
+    }
+
+    private function sanitizeSearchTerm(mixed $value): string
+    {
+        $term = trim((string)($value ?? ''));
+        $term = preg_replace('/[\r\n]/', '', $term) ?? '';
+        if ($term === '') {
+            return '';
+        }
+        return mb_substr($term, 0, 100, 'UTF-8');
     }
 
     private function generateInitialPassword(int $length = 16): string

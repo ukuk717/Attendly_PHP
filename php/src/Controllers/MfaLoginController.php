@@ -442,6 +442,7 @@ final class MfaLoginController
             'tenant_id' => $pending['user']['tenant_id'],
         ]);
         SessionAuth::clearPendingMfa();
+        $_SESSION['show_login_announcements'] = true;
 
         $loginIp = null;
         if ($request !== null) {

@@ -1,9 +1,14 @@
+<div class="platform-tenants-page">
 <div class="page-header">
   <h2>テナント管理</h2>
   <p class="form-note">
     プラットフォーム管理者として、テナントの作成・停止/再開、およびテナント管理者の二段階認証（TOTP）リセット/取消を行います。
   </p>
 </div>
+
+<?php if (isset($announcementBox)): ?>
+  <?php include __DIR__ . '/_partials/announcements_box.php'; ?>
+<?php endif; ?>
 
 <?php if (!empty($generated) && is_array($generated)): ?>
   <section class="card">
@@ -30,7 +35,7 @@
       <input type="email" name="contactEmail" maxlength="254" autocomplete="email" required>
     </label>
     <label class="form-field">
-      <span>管理者メールアドレス</span>
+      <span>管理者メールアドレス（アカウント登録）</span>
       <input type="email" name="adminEmail" maxlength="254" autocomplete="email" required>
     </label>
     <label class="form-field">
@@ -45,8 +50,35 @@
   </form>
 </section>
 
+<?php
+  $tenantsPagination = $tenantsPagination ?? null;
+  $adminsPagination = $adminsPagination ?? null;
+
+  $tenantsPage = is_array($tenantsPagination) && isset($tenantsPagination['page']) ? (int)$tenantsPagination['page'] : 1;
+  $tenantsHasPrev = is_array($tenantsPagination) && !empty($tenantsPagination['hasPrev']);
+  $tenantsHasNext = is_array($tenantsPagination) && !empty($tenantsPagination['hasNext']);
+
+  $adminsPage = is_array($adminsPagination) && isset($adminsPagination['page']) ? (int)$adminsPagination['page'] : 1;
+  $adminsHasPrev = is_array($adminsPagination) && !empty($adminsPagination['hasPrev']);
+  $adminsHasNext = is_array($adminsPagination) && !empty($adminsPagination['hasNext']);
+
+  $tenantSearchValue = trim((string)($tenantSearch ?? ''));
+  $tenantSearchQuery = $tenantSearchValue !== '' ? '&tenant_search=' . rawurlencode($tenantSearchValue) : '';
+?>
+
 <section class="card">
   <h3>テナント一覧</h3>
+  <form method="get" action="/platform/tenants" class="form-inline" style="gap: 8px; align-items: flex-end; margin-bottom: 12px;">
+    <input type="hidden" name="admins_page" value="<?= $e((string)$adminsPage) ?>">
+    <label class="form-field" style="min-width: 280px;">
+      <span>検索（テナント名・メールアドレス・電話番号）</span>
+      <input type="text" name="tenant_search" value="<?= $e($tenantSearchValue) ?>" maxlength="100" autocomplete="off">
+    </label>
+    <button type="submit" class="btn secondary">検索</button>
+    <?php if ($tenantSearchValue !== ''): ?>
+      <a class="btn link" href="/platform/tenants?admins_page=<?= $e((string)$adminsPage) ?>">クリア</a>
+    <?php endif; ?>
+  </form>
   <div class="table-responsive">
     <table class="table">
       <thead>
@@ -61,7 +93,7 @@
       </thead>
       <tbody>
         <?php if (empty($tenants)): ?>
-          <tr><td colspan="6">テナントはまだ登録されていません。</td></tr>
+          <tr><td colspan="6" class="table-empty">テナントはまだ登録されていません。</td></tr>
         <?php else: ?>
           <?php foreach ($tenants as $tenant): ?>
             <?php
@@ -75,9 +107,9 @@
               $isActive = $status === 'active';
             ?>
             <tr>
-              <td><?= $tenantName !== '' ? $e($tenantName) : '（名称未設定）' ?></td>
-              <td><code><?= $e($tenantUid) ?></code></td>
-              <td>
+              <td data-label="テナント"><?= $tenantName !== '' ? $e($tenantName) : '（名称未設定）' ?></td>
+              <td data-label="UID"><code><?= $e($tenantUid) ?></code></td>
+              <td data-label="連絡先">
                 <div class="user-cell">
                   <span class="user-email"><?= $contact !== '' ? $e($contact) : '未設定' ?></span>
                   <?php if ($contactPhone !== ''): ?>
@@ -85,15 +117,15 @@
                   <?php endif; ?>
                 </div>
               </td>
-              <td><?= $createdAt !== '' ? $e($createdAt) : '-' ?></td>
-              <td>
+              <td data-label="登録日時"><?= $createdAt !== '' ? $e($createdAt) : '-' ?></td>
+              <td data-label="ステータス">
                 <?php if ($isActive): ?>
                   <span class="status-badge success">稼働中</span>
                 <?php else: ?>
                   <span class="status-badge warning">停止中</span>
                 <?php endif; ?>
               </td>
-              <td>
+              <td data-label="操作">
                 <?php if ($tenantId > 0): ?>
                   <form method="post" action="/platform/tenants/<?= $e((string)$tenantId) ?>/status" class="form-inline table-action-form">
                     <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
@@ -122,25 +154,13 @@
   </div>
 </section>
 
-<?php
-  $tenantsPagination = $tenantsPagination ?? null;
-  $adminsPagination = $adminsPagination ?? null;
-
-  $tenantsPage = is_array($tenantsPagination) && isset($tenantsPagination['page']) ? (int)$tenantsPagination['page'] : 1;
-  $tenantsHasPrev = is_array($tenantsPagination) && !empty($tenantsPagination['hasPrev']);
-  $tenantsHasNext = is_array($tenantsPagination) && !empty($tenantsPagination['hasNext']);
-
-  $adminsPage = is_array($adminsPagination) && isset($adminsPagination['page']) ? (int)$adminsPagination['page'] : 1;
-  $adminsHasPrev = is_array($adminsPagination) && !empty($adminsPagination['hasPrev']);
-  $adminsHasNext = is_array($adminsPagination) && !empty($adminsPagination['hasNext']);
-?>
 <?php if ($tenantsHasPrev || $tenantsHasNext): ?>
   <div class="table-actions" style="justify-content:flex-end; margin-top:12px;">
     <?php if ($tenantsHasPrev): ?>
-      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)max(1, $tenantsPage - 1)) ?>&admins_page=<?= $e((string)$adminsPage) ?>">前へ</a>
+      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)max(1, $tenantsPage - 1)) ?>&admins_page=<?= $e((string)$adminsPage) ?><?= $e($tenantSearchQuery) ?>">前へ</a>
     <?php endif; ?>
     <?php if ($tenantsHasNext): ?>
-      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)($tenantsPage + 1)) ?>&admins_page=<?= $e((string)$adminsPage) ?>">次へ</a>
+      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)($tenantsPage + 1)) ?>&admins_page=<?= $e((string)$adminsPage) ?><?= $e($tenantSearchQuery) ?>">次へ</a>
     <?php endif; ?>
   </div>
 <?php endif; ?>
@@ -149,7 +169,7 @@
   <h3>テナント管理者（二段階認証リセット/取消）</h3>
   <p class="form-note">監査ログは暗号化して保存されます。</p>
   <div class="table-responsive">
-    <table class="table">
+    <table class="table tenant-admins-table">
       <thead>
         <tr>
           <th>テナント</th>
@@ -162,7 +182,7 @@
       </thead>
       <tbody>
         <?php if (empty($tenantAdmins)): ?>
-          <tr><td colspan="6">テナント管理者はまだ登録されていません。</td></tr>
+          <tr><td colspan="6" class="table-empty">テナント管理者はまだ登録されていません。</td></tr>
         <?php else: ?>
           <?php foreach ($tenantAdmins as $admin): ?>
             <?php
@@ -179,7 +199,7 @@
               $canRollback = is_array($lastReset) && !empty($lastReset['id']) && !isset($lastReset['rolledBackAtDisplay']);
             ?>
             <tr>
-              <td>
+              <td data-label="テナント">
                 <div class="user-cell">
                   <span class="user-name"><?= $tenantLabel !== '' ? $e($tenantLabel) : '未設定' ?></span>
                   <?php if ($tenantUid !== ''): ?>
@@ -190,7 +210,7 @@
                   <?php endif; ?>
                 </div>
               </td>
-              <td>
+              <td data-label="連絡/管理者メール">
                 <div class="user-cell">
                   <span class="user-name">管理者: <?= $e((string)($admin['username'] ?? '')) ?></span>
                   <span class="user-email"><?= $adminEmail !== '' ? $e($adminEmail) : '-' ?></span>
@@ -205,14 +225,14 @@
                   <?php endif; ?>
                 </div>
               </td>
-              <td>
+              <td data-label="二段階認証">
                 <?php if ($hasMfa): ?>
                   <span class="status-badge success">設定済み</span>
                 <?php else: ?>
                   <span class="status-badge warning">未設定</span>
                 <?php endif; ?>
               </td>
-              <td>
+              <td data-label="リセット操作詳細">
                 <?php if (!is_array($lastReset)): ?>
                   <span>リセット履歴はありません。</span>
                 <?php else: ?>
@@ -224,7 +244,7 @@
                   <?php endif; ?>
                 <?php endif; ?>
               </td>
-              <td>
+              <td data-label="理由">
                 <?php if (!is_array($lastReset)): ?>
                   <span>-</span>
                 <?php else: ?>
@@ -234,74 +254,17 @@
                   <?php endif; ?>
                 <?php endif; ?>
               </td>
-              <td>
-                <div class="table-actions">
-                  <?php if ($adminId > 0): ?>
-                    <form
-                      method="post"
-                      action="/platform/tenant-admins/<?= $e((string)$adminId) ?>/mfa/reset"
-                      class="form-inline table-action-form"
-                    >
-                      <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                      <div class="form-note">本人確認（いずれか2点一致）</div>
-                      <input
-                        type="email"
-                        name="verifyEmail"
-                        class="input-compact"
-                        placeholder="メールアドレス"
-                        maxlength="254"
-                      >
-                      <input
-                        type="text"
-                        name="verifyPhoneLast4"
-                        class="input-compact"
-                        placeholder="電話番号下4桁"
-                        maxlength="4"
-                        inputmode="numeric"
-                      >
-                      <input
-                        type="text"
-                        name="verifyRegisteredAt"
-                        class="input-compact"
-                        placeholder="登録日時 (YYYY-MM-DD)"
-                        maxlength="19"
-                      >
-                      <input
-                        type="text"
-                        name="verifyTenantUid"
-                        class="input-compact"
-                        placeholder="テナントUID"
-                        maxlength="64"
-                      >
-                      <input
-                        type="text"
-                        name="reason"
-                        class="input-compact"
-                        placeholder="理由（必須）"
-                        required
-                        maxlength="200"
-                      >
-                      <label class="form-checkbox" style="margin-top:0;">
-                        <input type="checkbox" name="confirmed" value="yes" required>
-                        <span>確認</span>
-                      </label>
-                      <button
-                        type="submit"
-                        class="btn danger"
-                        data-confirm-message="テナント管理者の二段階認証をリセットします。よろしいですか？"
-                      >
-                        二段階認証リセット
-                      </button>
-                    </form>
-
-                    <?php if ($canRollback): ?>
+              <td data-label="操作">
+                <?php if ($adminId > 0): ?>
+                  <details class="action-disclosure">
+                    <summary class="btn secondary action-disclosure__summary">本人確認と操作を表示</summary>
+                    <div class="table-actions">
                       <form
                         method="post"
-                        action="/platform/tenant-admins/<?= $e((string)$adminId) ?>/mfa/rollback"
+                        action="/platform/tenant-admins/<?= $e((string)$adminId) ?>/mfa/reset"
                         class="form-inline table-action-form"
                       >
                         <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                        <input type="hidden" name="logId" value="<?= $e((string)$lastReset['id']) ?>">
                         <div class="form-note">本人確認（いずれか2点一致）</div>
                         <input
                           type="email"
@@ -334,25 +297,85 @@
                         >
                         <input
                           type="text"
-                          name="rollbackReason"
+                          name="reason"
                           class="input-compact"
-                          placeholder="取消理由（必須）"
+                          placeholder="理由（必須）"
                           required
                           maxlength="200"
                         >
+                        <label class="form-checkbox" style="margin-top:0;">
+                          <input type="checkbox" name="confirmed" value="yes" required>
+                          <span>確認</span>
+                        </label>
                         <button
                           type="submit"
-                          class="btn secondary"
-                          data-confirm-message="直前の二段階認証リセットを取り消します。よろしいですか？"
+                          class="btn danger"
+                          data-confirm-message="テナント管理者の二段階認証をリセットします。よろしいですか？"
                         >
-                          直前のリセットを取消
+                          二段階認証リセット
                         </button>
                       </form>
-                    <?php endif; ?>
-                  <?php else: ?>
-                    <span class="muted">操作不可（ID不明）</span>
-                  <?php endif; ?>
-                </div>
+
+                      <?php if ($canRollback): ?>
+                        <form
+                          method="post"
+                          action="/platform/tenant-admins/<?= $e((string)$adminId) ?>/mfa/rollback"
+                          class="form-inline table-action-form"
+                        >
+                          <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                          <input type="hidden" name="logId" value="<?= $e((string)$lastReset['id']) ?>">
+                          <div class="form-note">本人確認（いずれか2点一致）</div>
+                          <input
+                            type="email"
+                            name="verifyEmail"
+                            class="input-compact"
+                            placeholder="メールアドレス"
+                            maxlength="254"
+                          >
+                          <input
+                            type="text"
+                            name="verifyPhoneLast4"
+                            class="input-compact"
+                            placeholder="電話番号下4桁"
+                            maxlength="4"
+                            inputmode="numeric"
+                          >
+                          <input
+                            type="text"
+                            name="verifyRegisteredAt"
+                            class="input-compact"
+                            placeholder="登録日時 (YYYY-MM-DD)"
+                            maxlength="19"
+                          >
+                          <input
+                            type="text"
+                            name="verifyTenantUid"
+                            class="input-compact"
+                            placeholder="テナントUID"
+                            maxlength="64"
+                          >
+                          <input
+                            type="text"
+                            name="rollbackReason"
+                            class="input-compact"
+                            placeholder="取消理由（必須）"
+                            required
+                            maxlength="200"
+                          >
+                          <button
+                            type="submit"
+                            class="btn secondary"
+                            data-confirm-message="直前の二段階認証リセットを取り消します。よろしいですか？"
+                          >
+                            直前のリセットを取消
+                          </button>
+                        </form>
+                      <?php endif; ?>
+                    </div>
+                  </details>
+                <?php else: ?>
+                  <span class="muted">操作不可（ID不明）</span>
+                <?php endif; ?>
               </td>
             </tr>
           <?php endforeach; ?>
@@ -365,10 +388,11 @@
 <?php if ($adminsHasPrev || $adminsHasNext): ?>
   <div class="table-actions" style="justify-content:flex-end; margin-top:12px;">
     <?php if ($adminsHasPrev): ?>
-      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)$tenantsPage) ?>&admins_page=<?= $e((string)max(1, $adminsPage - 1)) ?>">前へ</a>
+      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)$tenantsPage) ?>&admins_page=<?= $e((string)max(1, $adminsPage - 1)) ?><?= $e($tenantSearchQuery) ?>">前へ</a>
     <?php endif; ?>
     <?php if ($adminsHasNext): ?>
-      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)$tenantsPage) ?>&admins_page=<?= $e((string)($adminsPage + 1)) ?>">次へ</a>
+      <a class="btn secondary" href="/platform/tenants?tenants_page=<?= $e((string)$tenantsPage) ?>&admins_page=<?= $e((string)($adminsPage + 1)) ?><?= $e($tenantSearchQuery) ?>">次へ</a>
     <?php endif; ?>
   </div>
 <?php endif; ?>
+</div>

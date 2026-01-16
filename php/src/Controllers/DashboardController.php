@@ -7,6 +7,7 @@ namespace Attendly\Controllers;
 use Attendly\Database\Repository;
 use Attendly\Security\CsrfToken;
 use Attendly\Services\BreakComplianceService;
+use Attendly\Services\AnnouncementService;
 use Attendly\Services\WorkSessionService;
 use Attendly\Support\AppTime;
 use Attendly\Support\BreakFeature;
@@ -22,14 +23,16 @@ final class DashboardController
 
     private Repository $repository;
     private WorkSessionService $workSessions;
+    private AnnouncementService $announcements;
     private View $view;
     private bool $breaksEnabled;
 
-    public function __construct(?View $view = null, ?Repository $repository = null, ?WorkSessionService $workSessions = null)
+    public function __construct(?View $view = null, ?Repository $repository = null, ?WorkSessionService $workSessions = null, ?AnnouncementService $announcements = null)
     {
         $this->view = $view ?? new View(dirname(__DIR__, 2) . '/views');
         $this->repository = $repository ?? new Repository();
         $this->workSessions = $workSessions ?? new WorkSessionService($this->repository);
+        $this->announcements = $announcements ?? new AnnouncementService($this->repository);
         $this->breaksEnabled = BreakFeature::isEnabled();
     }
 
@@ -52,11 +55,15 @@ final class DashboardController
     private function renderEmployee(ServerRequestInterface $request, ResponseInterface $response, array $user): ResponseInterface
     {
         $data = $this->workSessions->buildUserDashboardData((int)$user['id']);
+        $announcementBox = $this->announcements->listForUser((int)$user['id'], 5);
+        $announcementModal = $this->consumeLoginAnnouncements((int)$user['id']);
         $html = $this->view->renderWithLayout('dashboard', [
             'title' => 'ダッシュボード',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'currentPath' => $request->getUri()->getPath(),
+            'passkeyRecommendation' => $this->buildPasskeyRecommendation((int)$user['id']),
             'openSession' => $data['open_session'],
             'openBreak' => $data['open_break'],
             'recentSessions' => $data['recent_sessions'],
@@ -64,6 +71,8 @@ final class DashboardController
             'monthlyTotal' => $data['monthly_total_formatted'],
             'timezone' => $data['timezone'],
             'breaksEnabled' => $this->breaksEnabled,
+            'announcementBox' => $announcementBox,
+            'announcementModal' => $announcementModal,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -184,12 +193,16 @@ final class DashboardController
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
         $retentionYears = $this->getRetentionYears();
+        $announcementBox = $this->announcements->listForUser((int)$user['id'], 5);
+        $announcementModal = $this->consumeLoginAnnouncements((int)$user['id']);
 
         $html = $this->view->renderWithLayout('tenant_admin_dashboard', [
             'title' => 'テナント管理ダッシュボード',
             'csrf' => CsrfToken::getToken(),
             'flashes' => Flash::consume(),
             'currentUser' => $request->getAttribute('currentUser'),
+            'currentPath' => $request->getUri()->getPath(),
+            'passkeyRecommendation' => $this->buildPasskeyRecommendation((int)$user['id']),
             'metrics' => $metrics,
             'tenantId' => $tenantId,
             'targetYear' => $targetYear,
@@ -202,6 +215,8 @@ final class DashboardController
             'tenantSettings' => [
                 'requireEmailVerification' => !empty($tenant['require_employee_email_verification']),
             ],
+            'announcementBox' => $announcementBox,
+            'announcementModal' => $announcementModal,
         ]);
         $response->getBody()->write($html);
         return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
@@ -222,6 +237,18 @@ final class DashboardController
             $month = (int)$now->format('n');
         }
         return [$year, $month, sprintf('?year=%d&month=%d', $year, $month)];
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function consumeLoginAnnouncements(int $userId): array
+    {
+        if (empty($_SESSION['show_login_announcements'])) {
+            return [];
+        }
+        unset($_SESSION['show_login_announcements']);
+        return $this->announcements->listForLoginModal($userId, 3);
     }
 
     private function calculateNetMinutesWithinRange(array $sessions, \DateTimeImmutable $start, \DateTimeImmutable $endExclusive, array $breaksBySessionId): int
@@ -384,5 +411,26 @@ final class DashboardController
             return 5;
         }
         return max(1, (int)$years);
+    }
+
+    /**
+     * @return array{userId:int,hasPasskey:bool}
+     */
+    private function buildPasskeyRecommendation(int $userId): array
+    {
+        $hasPasskey = false;
+        try {
+            $hasPasskey = $this->repository->countPasskeysByUser($userId) > 0;
+        } catch (\PDOException $e) {
+            if ($e->getCode() !== '42S02') {
+                throw $e;
+            }
+        } catch (\Throwable) {
+            $hasPasskey = false;
+        }
+        return [
+            'userId' => $userId,
+            'hasPasskey' => $hasPasskey,
+        ];
     }
 }

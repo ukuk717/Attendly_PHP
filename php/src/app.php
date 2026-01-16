@@ -39,6 +39,8 @@ use Attendly\Controllers\AdminSessionsController;
 use Attendly\Controllers\AdminSessionBreaksController;
 use Attendly\Controllers\AdminTenantSettingsController;
 use Attendly\Controllers\PlatformTenantsController;
+use Attendly\Controllers\AnnouncementController;
+use Attendly\Controllers\PlatformAnnouncementsController;
 use Attendly\Controllers\SignedDownloadController;
 use Attendly\Support\AppTime;
 use Attendly\Security\RequirePlatformMiddleware;
@@ -287,7 +289,20 @@ function create_app(): \Slim\App
     })->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
     $app->post('/platform/tenant-admins/{userId}/mfa/rollback', [$platformTenants, 'rollbackTenantAdminMfa'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
 
+    // Announcements (platform admin)
+    $platformAnnouncements = new PlatformAnnouncementsController($view);
+    $app->get('/platform/announcements', [$platformAnnouncements, 'index'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/platform/announcements/new', [$platformAnnouncements, 'showCreate'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/announcements', [$platformAnnouncements, 'create'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->get('/platform/announcements/{id}/edit', [$platformAnnouncements, 'showEdit'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/announcements/{id}', [$platformAnnouncements, 'update'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+    $app->post('/platform/announcements/{id}/archive', [$platformAnnouncements, 'archive'])->add(new RequirePlatformMiddleware())->add(new RequireAuthMiddleware());
+
     $app->get('/dashboard', [$dashboard, 'show'])->add(new RequireAuthMiddleware());
+    $announcementController = new AnnouncementController($view);
+    $app->get('/announcements', [$announcementController, 'index'])->add(new RequireAuthMiddleware());
+    $app->post('/announcements/{id}/read', [$announcementController, 'markRead'])->add(new RequireAuthMiddleware());
+    $app->post('/announcements/mark-all-read', [$announcementController, 'markAllRead'])->add(new RequireAuthMiddleware());
     $app->post('/work-sessions/punch', [$workSessions, 'toggle'])->add(new RequireAuthMiddleware());
     $app->post('/work-sessions/break/start', [$workSessionBreaks, 'start'])->add(new RequireAuthMiddleware());
     $app->post('/work-sessions/break/end', [$workSessionBreaks, 'end'])->add(new RequireAuthMiddleware());

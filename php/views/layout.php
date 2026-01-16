@@ -25,7 +25,8 @@
         if ($displayName === '') {
             $email = trim((string)($currentUser['email'] ?? ''));
             $maskEmailPaths = ['/account', '/accounts', '/settings/mfa'];
-            $maskEmailOnAccount = $currentPath !== ''
+            $maskEmailOnAccount = $isPlatform
+                && $currentPath !== ''
                 && (in_array($currentPath, $maskEmailPaths, true) || str_starts_with($currentPath, '/settings/mfa/'));
             if ($maskEmailOnAccount && $email !== '' && str_contains($email, '@')) {
                 [$local, $domain] = explode('@', $email, 2);
@@ -98,6 +99,12 @@
 
     <?= $content ?>
   </main>
+  <?php if (!empty($announcementModal)): ?>
+    <?php include __DIR__ . '/_partials/announcements_modal.php'; ?>
+  <?php endif; ?>
   <script src="/header.js" defer></script>
+  <?php if (!empty($announcementModal)): ?>
+    <script src="/announcements.js" defer></script>
+  <?php endif; ?>
 </body>
 </html>

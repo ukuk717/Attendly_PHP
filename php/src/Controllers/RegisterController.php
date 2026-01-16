@@ -182,7 +182,7 @@ final class RegisterController
                 return $response->withStatus(303)->withHeader('Location', '/register');
             }
 
-            Flash::add('success', 'アカウントを作成しました。ログインしてください。');
+            Flash::add('success', 'アカウントを作成しました。ログイン後、パスキーを登録すると安全性と利便性が高まります。');
             return $response->withStatus(303)->withHeader('Location', '/login');
         }
 

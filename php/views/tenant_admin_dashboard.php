@@ -13,6 +13,32 @@
   <p class="form-note">タイムゾーン: <?= $e($metrics['timezone'] ?? 'Asia/Tokyo') ?></p>
 </div>
 
+<?php
+  $passkeyReco = is_array($passkeyRecommendation ?? null) ? $passkeyRecommendation : [];
+  $passkeyUserId = (int)($passkeyReco['userId'] ?? 0);
+  $passkeyHas = !empty($passkeyReco['hasPasskey']);
+?>
+<?php if ($passkeyUserId > 0 && !$passkeyHas): ?>
+  <section
+    class="card highlight-card passkey-recommendation"
+    data-passkey-recommendation
+    data-user-id="<?= $e((string)$passkeyUserId) ?>"
+    data-has-passkey="<?= $passkeyHas ? '1' : '0' ?>"
+  >
+    <h3>パスキーの利用をおすすめします</h3>
+    <p class="form-note">パスキーならパスワード入力や二段階認証が不要になり、より安全にログインできます。</p>
+    <p class="form-note">共有端末では登録しないでください。</p>
+    <div class="form-actions">
+      <a class="btn primary" href="/account#passkeys">パスキーを登録する</a>
+      <button type="button" class="btn secondary" data-passkey-dismiss>あとで</button>
+    </div>
+  </section>
+<?php endif; ?>
+
+<?php if (isset($announcementBox)): ?>
+  <?php include __DIR__ . '/_partials/announcements_box.php'; ?>
+<?php endif; ?>
+
 <section class="card metric-grid">
   <div class="metric">
     <p class="metric-label">有効な従業員</p>
@@ -23,6 +49,8 @@
     <p class="metric-value"><?= $e((string)($metrics['open_sessions'] ?? 0)) ?> 件</p>
   </div>
 </section>
+
+<script src="/passkeys.js" defer></script>
 
 <section class="card">
   <header class="section-header">
@@ -239,9 +267,10 @@
       >
       <span>従業員登録時にメールアドレスの確認コードを必須にする</span>
     </label>
-    <p class="form-note">
-      有効化すると従業員自身が登録を完了する前に、6桁の確認コードでメールアドレスを検証します。ロールコードの利用回数は確認完了後にのみ消費されます。
-    </p>
+  <p class="form-note">
+    有効にすると、従業員がアカウント登録時にメールアドレスへ送信される確認コードの入力が必要になります。
+    認証が成功しない限り、アカウント作成は行われません。ロールコードの利用回数は確認完了後にのみ消費されます。
+  </p>
     <button type="submit" class="btn secondary">設定を保存</button>
   </form>
 </section>

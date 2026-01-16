@@ -2919,14 +2919,20 @@ final class Repository
         $stmt->execute([$requireEmailVerification ? 1 : 0, $tenantId]);
     }
 
-    public function countTenantsForPlatform(): int
+    public function countTenantsForPlatform(?string $search = null): int
     {
-        $stmt = $this->pdo->query('SELECT COUNT(*) AS c FROM tenants');
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!is_array($row) || !isset($row['c'])) {
-            return 0;
+        $search = $this->normalizeTenantSearch($search);
+        if ($search === '') {
+            $stmt = $this->pdo->query('SELECT COUNT(*) AS c FROM tenants');
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!is_array($row) || !isset($row['c'])) {
+                return 0;
+            }
+            return (int)$row['c'];
         }
-        return (int)$row['c'];
+
+        $rows = $this->fetchTenantsForSearch();
+        return count($this->filterTenantsBySearch($rows, $search));
     }
 
     /**
@@ -2942,38 +2948,138 @@ final class Repository
      *   created_at:DateTimeImmutable
      * }>
      */
-    public function listTenantsForPlatform(int $limit = 200, int $offset = 0): array
+    public function listTenantsForPlatform(int $limit = 200, int $offset = 0, ?string $search = null): array
     {
         $limit = max(1, min(500, $limit));
         $offset = max(0, $offset);
-        $stmt = $this->pdo->prepare(
+        $search = $this->normalizeTenantSearch($search);
+        if ($search === '') {
+            $stmt = $this->pdo->prepare(
+                'SELECT id, tenant_uid, name, contact_email, contact_phone, status, deactivated_at, require_employee_email_verification, created_at
+                 FROM tenants
+                 ORDER BY id ASC
+                 LIMIT ? OFFSET ?'
+            );
+            $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+            $stmt->bindValue(2, $offset, PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $result = [];
+            foreach ($rows as $row) {
+                $result[] = $this->mapTenantRow($row);
+            }
+            return $result;
+        }
+
+        $rows = $this->fetchTenantsForSearch();
+        $filtered = $this->filterTenantsBySearch($rows, $search);
+        return array_slice($filtered, $offset, $limit);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    private function fetchTenantsForSearch(): array
+    {
+        $stmt = $this->pdo->query(
             'SELECT id, tenant_uid, name, contact_email, contact_phone, status, deactivated_at, require_employee_email_verification, created_at
              FROM tenants
-             ORDER BY id ASC
-             LIMIT ? OFFSET ?'
+             ORDER BY id ASC'
         );
-        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
-        $stmt->bindValue(2, $offset, PDO::PARAM_INT);
-        $stmt->execute();
-        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $rows
+     * @return array<int, array{
+     *   id:int,
+     *   tenant_uid:string,
+     *   name:?string,
+     *   contact_email:?string,
+     *   contact_phone:?string,
+     *   status:string,
+     *   deactivated_at:?DateTimeImmutable,
+     *   require_employee_email_verification:bool,
+     *   created_at:DateTimeImmutable
+     * }>
+     */
+    private function filterTenantsBySearch(array $rows, string $search): array
+    {
+        $needle = mb_strtolower($search, 'UTF-8');
+        $needleDigits = preg_replace('/\\D/', '', $search) ?? '';
         $result = [];
         foreach ($rows as $row) {
-            $name = TenantDataCipher::decrypt($row['name'] ?? null);
-            $contactEmail = TenantDataCipher::decrypt($row['contact_email'] ?? null);
-            $contactPhone = TenantDataCipher::decrypt($row['contact_phone'] ?? null);
-            $result[] = [
-                'id' => (int)$row['id'],
-                'tenant_uid' => (string)$row['tenant_uid'],
-                'name' => $name !== null ? (string)$name : null,
-                'contact_email' => $contactEmail !== null ? (string)$contactEmail : null,
-                'contact_phone' => $contactPhone !== null ? (string)$contactPhone : null,
-                'status' => (string)$row['status'],
-                'deactivated_at' => AppTime::fromStorage($row['deactivated_at']),
-                'require_employee_email_verification' => (bool)$row['require_employee_email_verification'],
-                'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
-            ];
+            $tenant = $this->mapTenantRow($row);
+            $name = $tenant['name'] ?? '';
+            $email = $tenant['contact_email'] ?? '';
+            $phone = $tenant['contact_phone'] ?? '';
+
+            $matched = false;
+            foreach ([$name, $email, $phone] as $value) {
+                if ($value === '') {
+                    continue;
+                }
+                $haystack = mb_strtolower($value, 'UTF-8');
+                if (str_contains($haystack, $needle)) {
+                    $matched = true;
+                    break;
+                }
+            }
+
+            if (!$matched && $needleDigits !== '') {
+                $phoneDigits = preg_replace('/\\D/', '', $phone) ?? '';
+                if ($phoneDigits !== '' && str_contains($phoneDigits, $needleDigits)) {
+                    $matched = true;
+                }
+            }
+
+            if ($matched) {
+                $result[] = $tenant;
+            }
         }
         return $result;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @return array{
+     *   id:int,
+     *   tenant_uid:string,
+     *   name:?string,
+     *   contact_email:?string,
+     *   contact_phone:?string,
+     *   status:string,
+     *   deactivated_at:?DateTimeImmutable,
+     *   require_employee_email_verification:bool,
+     *   created_at:DateTimeImmutable
+     * }
+     */
+    private function mapTenantRow(array $row): array
+    {
+        $name = TenantDataCipher::decrypt($row['name'] ?? null);
+        $contactEmail = TenantDataCipher::decrypt($row['contact_email'] ?? null);
+        $contactPhone = TenantDataCipher::decrypt($row['contact_phone'] ?? null);
+        return [
+            'id' => (int)$row['id'],
+            'tenant_uid' => (string)$row['tenant_uid'],
+            'name' => $name !== null ? (string)$name : null,
+            'contact_email' => $contactEmail !== null ? (string)$contactEmail : null,
+            'contact_phone' => $contactPhone !== null ? (string)$contactPhone : null,
+            'status' => (string)$row['status'],
+            'deactivated_at' => AppTime::fromStorage($row['deactivated_at']),
+            'require_employee_email_verification' => (bool)$row['require_employee_email_verification'],
+            'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+        ];
+    }
+
+    private function normalizeTenantSearch(?string $search): string
+    {
+        $value = trim((string)($search ?? ''));
+        $value = preg_replace('/[\r\n]/', '', $value) ?? '';
+        if ($value === '') {
+            return '';
+        }
+        return mb_substr($value, 0, 100, 'UTF-8');
     }
 
     /**
@@ -3339,6 +3445,275 @@ final class Repository
         }
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
+    }
+
+    /**
+     * @return array<int,array{id:int,title:string,body:string,type:string,status:string,show_on_login:bool,is_pinned:bool,publish_start_at:?DateTimeImmutable,publish_end_at:?DateTimeImmutable,created_at:DateTimeImmutable,updated_at:DateTimeImmutable,read_at:?DateTimeImmutable}>
+     */
+    public function listActiveAnnouncementsForUser(int $userId, int $limit, int $offset = 0): array
+    {
+        $now = $this->formatDateTime(AppTime::now());
+        $sql = <<<'SQL'
+SELECT a.id, a.title, a.body, a.type, a.status, a.show_on_login, a.is_pinned,
+       a.publish_start_at, a.publish_end_at, a.created_at, a.updated_at,
+       ar.read_at
+  FROM announcements a
+  LEFT JOIN announcement_reads ar
+    ON ar.announcement_id = a.id AND ar.user_id = ?
+ WHERE a.status = 'published'
+   AND (a.publish_start_at IS NULL OR a.publish_start_at <= ?)
+   AND (a.publish_end_at IS NULL OR a.publish_end_at >= ?)
+ ORDER BY a.is_pinned DESC,
+          COALESCE(a.publish_start_at, a.created_at) DESC,
+          a.id DESC
+ LIMIT ? OFFSET ?
+SQL;
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->bindValue(1, $userId, PDO::PARAM_INT);
+        $stmt->bindValue(2, $now, PDO::PARAM_STR);
+        $stmt->bindValue(3, $now, PDO::PARAM_STR);
+        $stmt->bindValue(4, $limit, PDO::PARAM_INT);
+        $stmt->bindValue(5, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $this->mapAnnouncementRows($rows);
+    }
+
+    public function countActiveAnnouncementsForUser(int $userId): int
+    {
+        $now = $this->formatDateTime(AppTime::now());
+        $stmt = $this->pdo->prepare(
+            'SELECT COUNT(*) FROM announcements
+              WHERE status = "published"
+                AND (publish_start_at IS NULL OR publish_start_at <= ?)
+                AND (publish_end_at IS NULL OR publish_end_at >= ?)'
+        );
+        $stmt->execute([$now, $now]);
+        return (int)$stmt->fetchColumn();
+    }
+
+    /**
+     * @return array<int,array{id:int,title:string,body:string,type:string,status:string,show_on_login:bool,is_pinned:bool,publish_start_at:?DateTimeImmutable,publish_end_at:?DateTimeImmutable,created_at:DateTimeImmutable,updated_at:DateTimeImmutable,read_at:?DateTimeImmutable}>
+     */
+    public function listLoginAnnouncementsForUser(int $userId, int $limit): array
+    {
+        $now = $this->formatDateTime(AppTime::now());
+        $sql = <<<'SQL'
+SELECT a.id, a.title, a.body, a.type, a.status, a.show_on_login, a.is_pinned,
+       a.publish_start_at, a.publish_end_at, a.created_at, a.updated_at,
+       ar.read_at
+  FROM announcements a
+  LEFT JOIN announcement_reads ar
+    ON ar.announcement_id = a.id AND ar.user_id = ?
+ WHERE a.status = 'published'
+   AND a.show_on_login = 1
+   AND ar.read_at IS NULL
+   AND (a.publish_start_at IS NULL OR a.publish_start_at <= ?)
+   AND (a.publish_end_at IS NULL OR a.publish_end_at >= ?)
+ ORDER BY a.is_pinned DESC,
+          COALESCE(a.publish_start_at, a.created_at) DESC,
+          a.id DESC
+ LIMIT ?
+SQL;
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->bindValue(1, $userId, PDO::PARAM_INT);
+        $stmt->bindValue(2, $now, PDO::PARAM_STR);
+        $stmt->bindValue(3, $now, PDO::PARAM_STR);
+        $stmt->bindValue(4, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $this->mapAnnouncementRows($rows);
+    }
+
+    public function findAnnouncementById(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, title, body, type, status, show_on_login, is_pinned,
+                    publish_start_at, publish_end_at, created_by, created_at, updated_at
+               FROM announcements WHERE id = ? LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row === false) {
+            return null;
+        }
+        return [
+            'id' => (int)$row['id'],
+            'title' => (string)$row['title'],
+            'body' => (string)$row['body'],
+            'type' => (string)$row['type'],
+            'status' => (string)$row['status'],
+            'show_on_login' => !empty($row['show_on_login']),
+            'is_pinned' => !empty($row['is_pinned']),
+            'publish_start_at' => AppTime::fromStorage($row['publish_start_at']),
+            'publish_end_at' => AppTime::fromStorage($row['publish_end_at']),
+            'created_by' => $row['created_by'] !== null ? (int)$row['created_by'] : null,
+            'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+            'updated_at' => AppTime::fromStorage((string)$row['updated_at']) ?? AppTime::now(),
+        ];
+    }
+
+    /**
+     * @param array{title:string,body:string,type:string,status:string,show_on_login:bool,is_pinned:bool,publish_start_at:?DateTimeImmutable,publish_end_at:?DateTimeImmutable,created_by:int} $data
+     */
+    public function createAnnouncement(array $data): int
+    {
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO announcements
+               (title, body, type, status, show_on_login, is_pinned, publish_start_at, publish_end_at, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            $data['title'],
+            $data['body'],
+            $data['type'],
+            $data['status'],
+            $data['show_on_login'] ? 1 : 0,
+            $data['is_pinned'] ? 1 : 0,
+            $data['publish_start_at'] !== null ? $this->formatDateTime($data['publish_start_at']) : null,
+            $data['publish_end_at'] !== null ? $this->formatDateTime($data['publish_end_at']) : null,
+            $data['created_by'],
+            $this->formatDateTime($now),
+            $this->formatDateTime($now),
+        ]);
+        return (int)$this->pdo->lastInsertId();
+    }
+
+    /**
+     * @param array{title:string,body:string,type:string,status:string,show_on_login:bool,is_pinned:bool,publish_start_at:?DateTimeImmutable,publish_end_at:?DateTimeImmutable} $data
+     */
+    public function updateAnnouncement(int $id, array $data): void
+    {
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare(
+            'UPDATE announcements
+                SET title = ?, body = ?, type = ?, status = ?, show_on_login = ?, is_pinned = ?,
+                    publish_start_at = ?, publish_end_at = ?, updated_at = ?
+              WHERE id = ?'
+        );
+        $stmt->execute([
+            $data['title'],
+            $data['body'],
+            $data['type'],
+            $data['status'],
+            $data['show_on_login'] ? 1 : 0,
+            $data['is_pinned'] ? 1 : 0,
+            $data['publish_start_at'] !== null ? $this->formatDateTime($data['publish_start_at']) : null,
+            $data['publish_end_at'] !== null ? $this->formatDateTime($data['publish_end_at']) : null,
+            $this->formatDateTime($now),
+            $id,
+        ]);
+    }
+
+    public function archiveAnnouncement(int $id): void
+    {
+        $now = AppTime::now();
+        $stmt = $this->pdo->prepare('UPDATE announcements SET status = ?, updated_at = ? WHERE id = ?');
+        $stmt->execute(['archived', $this->formatDateTime($now), $id]);
+    }
+
+    public function countAnnouncementsForPlatform(?string $status = null): int
+    {
+        if ($status !== null && $status !== '') {
+            $stmt = $this->pdo->prepare('SELECT COUNT(*) FROM announcements WHERE status = ?');
+            $stmt->execute([$status]);
+            return (int)$stmt->fetchColumn();
+        }
+        $stmt = $this->pdo->query('SELECT COUNT(*) FROM announcements');
+        return (int)$stmt->fetchColumn();
+    }
+
+    /**
+     * @return array<int,array{id:int,title:string,body:string,type:string,status:string,show_on_login:bool,is_pinned:bool,publish_start_at:?DateTimeImmutable,publish_end_at:?DateTimeImmutable,created_at:DateTimeImmutable,updated_at:DateTimeImmutable}>
+     */
+    public function listAnnouncementsForPlatform(int $limit, int $offset = 0, ?string $status = null): array
+    {
+        $params = [];
+        $where = '';
+        if ($status !== null && $status !== '') {
+            $where = 'WHERE status = ?';
+            $params[] = $status;
+        }
+        $sql = sprintf(
+            'SELECT id, title, body, type, status, show_on_login, is_pinned,
+                    publish_start_at, publish_end_at, created_at, updated_at
+               FROM announcements %s
+              ORDER BY COALESCE(publish_start_at, created_at) DESC, id DESC
+              LIMIT ? OFFSET ?',
+            $where
+        );
+        $stmt = $this->pdo->prepare($sql);
+        $bindIndex = 1;
+        foreach ($params as $value) {
+            $stmt->bindValue($bindIndex, $value, PDO::PARAM_STR);
+            $bindIndex++;
+        }
+        $stmt->bindValue($bindIndex, $limit, PDO::PARAM_INT);
+        $stmt->bindValue($bindIndex + 1, $offset, PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $this->mapAnnouncementRows($rows);
+    }
+
+    public function markAnnouncementRead(int $userId, int $announcementId, DateTimeImmutable $readAt): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO announcement_reads (announcement_id, user_id, read_at)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE read_at = VALUES(read_at)'
+        );
+        $stmt->execute([
+            $announcementId,
+            $userId,
+            $this->formatDateTime($readAt),
+        ]);
+    }
+
+    /**
+     * @param int[] $announcementIds
+     */
+    public function markAnnouncementsRead(int $userId, array $announcementIds, DateTimeImmutable $readAt): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO announcement_reads (announcement_id, user_id, read_at)
+             VALUES (?, ?, ?)
+             ON DUPLICATE KEY UPDATE read_at = VALUES(read_at)'
+        );
+        $formatted = $this->formatDateTime($readAt);
+        foreach ($announcementIds as $announcementId) {
+            $stmt->execute([
+                $announcementId,
+                $userId,
+                $formatted,
+            ]);
+        }
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $rows
+     * @return array<int,array<string,mixed>>
+     */
+    private function mapAnnouncementRows(array $rows): array
+    {
+        $mapped = [];
+        foreach ($rows as $row) {
+            $mapped[] = [
+                'id' => (int)$row['id'],
+                'title' => (string)$row['title'],
+                'body' => (string)$row['body'],
+                'type' => (string)$row['type'],
+                'status' => (string)$row['status'],
+                'show_on_login' => !empty($row['show_on_login']),
+                'is_pinned' => !empty($row['is_pinned']),
+                'publish_start_at' => AppTime::fromStorage($row['publish_start_at']),
+                'publish_end_at' => AppTime::fromStorage($row['publish_end_at']),
+                'created_at' => AppTime::fromStorage((string)$row['created_at']) ?? AppTime::now(),
+                'updated_at' => AppTime::fromStorage((string)$row['updated_at']) ?? AppTime::now(),
+                'read_at' => isset($row['read_at']) ? AppTime::fromStorage($row['read_at']) : null,
+            ];
+        }
+        return $mapped;
     }
 
     private function formatDateTime(DateTimeImmutable $dt): string

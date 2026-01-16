@@ -1,7 +1,11 @@
 <div class="auth-container">
   <section class="card auth-card">
     <h2>ログイン</h2>
-    <form method="post" action="/login" class="form">
+    <?php
+      $recaptchaEnabled = filter_var($_ENV['RECAPTCHA_ENABLED'] ?? false, FILTER_VALIDATE_BOOL);
+      $recaptchaSiteKey = trim((string)($_ENV['RECAPTCHA_SITE_KEY'] ?? ''));
+    ?>
+    <form method="post" action="/login" class="form" data-recaptcha-enabled="<?= $recaptchaEnabled && $recaptchaSiteKey !== '' ? '1' : '0' ?>" data-recaptcha-site-key="<?= $e($recaptchaSiteKey) ?>">
       <input type="hidden" name="csrf_token" value="<?= $e($csrf ?? '') ?>">
       <label class="form-field" for="email">メールアドレス
         <input
@@ -26,6 +30,8 @@
         >
       </label>
 
+      <input type="hidden" name="g-recaptcha-response" value="">
+
       <div class="form-actions">
         <button type="submit" class="btn primary">ログイン</button>
         <a class="btn secondary" href="/password/reset">パスワードをお忘れの方</a>
@@ -45,3 +51,7 @@
 </div>
 
 <script src="/passkeys.js" defer></script>
+<?php if ($recaptchaEnabled && $recaptchaSiteKey !== ''): ?>
+  <script src="https://www.google.com/recaptcha/api.js?render=<?= $e($recaptchaSiteKey) ?>" defer></script>
+  <script src="/recaptcha_login.js" defer></script>
+<?php endif; ?>

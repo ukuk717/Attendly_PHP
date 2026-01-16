@@ -41,6 +41,7 @@
     </button>
     <nav class="app-header__nav" id="primary-nav">
       <a href="/platform/tenants" class="nav-link">テナント一覧</a>
+      <a href="/platform/announcements" class="nav-link">お知らせ管理</a>
       <a href="/account" class="nav-link">アカウント設定</a>
       <a href="/settings/mfa" class="nav-link">二段階認証設定</a>
       <?php if ($displayName !== ''): ?>
@@ -69,6 +70,12 @@
 
     <?= $content ?>
   </main>
+  <?php if (!empty($announcementModal)): ?>
+    <?php include __DIR__ . '/_partials/announcements_modal.php'; ?>
+  <?php endif; ?>
   <script src="/header.js" defer></script>
+  <?php if (!empty($announcementModal)): ?>
+    <script src="/announcements.js" defer></script>
+  <?php endif; ?>
 </body>
 </html>

@@ -64,6 +64,39 @@ CREATE TABLE role_codes (
   CONSTRAINT role_codes_created_by_fk FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE announcements (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  title VARCHAR(255) NOT NULL,
+  body TEXT NOT NULL,
+  type VARCHAR(32) NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'draft',
+  show_on_login TINYINT(1) NOT NULL DEFAULT 0,
+  is_pinned TINYINT(1) NOT NULL DEFAULT 0,
+  publish_start_at DATETIME(3),
+  publish_end_at DATETIME(3),
+  created_by INT UNSIGNED,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  KEY announcements_status_idx (status),
+  KEY announcements_type_idx (type),
+  KEY announcements_publish_idx (publish_start_at, publish_end_at),
+  KEY announcements_pinned_idx (is_pinned),
+  CONSTRAINT announcements_created_by_fk FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE announcement_reads (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  announcement_id INT UNSIGNED NOT NULL,
+  user_id INT UNSIGNED NOT NULL,
+  read_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY announcement_reads_unique (announcement_id, user_id),
+  KEY announcement_reads_user_idx (user_id),
+  CONSTRAINT announcement_reads_announcement_fk FOREIGN KEY (announcement_id) REFERENCES announcements (id) ON DELETE CASCADE,
+  CONSTRAINT announcement_reads_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE password_resets (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id INT UNSIGNED NOT NULL,

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node --env-file=.env server.js",
     "test": "cross-env NODE_ENV=test DB_FILE=:memory: jest --runInBand",
-    "purge:expired": "node --env-file=.env scripts/purgeExpiredData.js"
+    "purge:expired": "node --env-file=.env scripts/purgeExpiredData.js",
+    "test:e2e": "playwright test"
   },
   "repository": {
     "type": "git",
@@ -42,6 +43,7 @@
     "xlsx-populate": "^1.21.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "cross-env": "^10.1.0",
     "jest": "^30.2.0",
     "supertest": "^7.1.4"

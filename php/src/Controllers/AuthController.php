@@ -10,6 +10,7 @@ use Attendly\Support\ClientIpResolver;
 use Attendly\Support\Flash;
 use Attendly\Support\PasswordHasher;
 use Attendly\Support\PlatformPasswordPolicy;
+use Attendly\Support\RecaptchaVerifier;
 use Attendly\Support\SessionAuth;
 use Attendly\Database\Repository;
 use Attendly\View;
@@ -24,6 +25,7 @@ final class AuthController
     private string $trustCookieName;
     private int $trustTtlDays;
     private int $maxPasswordLength;
+    private bool $recaptchaEnabled;
 
     public function __construct(private View $view, private ?AuthService $authService = null, ?Repository $repository = null)
     {
@@ -32,6 +34,7 @@ final class AuthController
         $this->trustTtlDays = max(1, (int)($_ENV['MFA_TRUST_TTL_DAYS'] ?? 30));
         $rawMax = $_ENV['MAX_PASSWORD_LENGTH'] ?? 256;
         $this->maxPasswordLength = filter_var($rawMax, FILTER_VALIDATE_INT, ['options' => ['default' => 256, 'min_range' => 32]]) ?: 256;
+        $this->recaptchaEnabled = filter_var($_ENV['RECAPTCHA_ENABLED'] ?? false, FILTER_VALIDATE_BOOL);
     }
 
     public function showLogin(ServerRequestInterface $request, ResponseInterface $response): ResponseInterface
@@ -71,6 +74,31 @@ final class AuthController
         if ($this->maxPasswordLength > 0 && mb_strlen($password, 'UTF-8') > $this->maxPasswordLength) {
             Flash::add('error', 'パスワードが長すぎます。' . $this->maxPasswordLength . '文字以内で入力してください。');
             return $response->withStatus(303)->withHeader('Location', '/login');
+        }
+        if ($this->recaptchaEnabled && !$this->shouldBypassRecaptcha()) {
+            $token = (string)($data['g-recaptcha-response'] ?? '');
+            $ip = null;
+            try {
+                $ip = ClientIpResolver::resolve($request);
+            } catch (\Throwable) {
+                $ip = null;
+            }
+            if (trim($token) === '') {
+                error_log('[recaptcha] missing token on login');
+                Flash::add('error', 'reCAPTCHAの読み込みに失敗しました。ページを再読み込みしてください。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
+            $verifier = new RecaptchaVerifier();
+            $result = $verifier->verify($token, $ip, 'login');
+            if (!$result['success']) {
+                $debug = filter_var($_ENV['APP_DEBUG'] ?? false, FILTER_VALIDATE_BOOL);
+                if ($debug) {
+                    $codeList = implode(',', $result['error_codes']);
+                    error_log(sprintf('[recaptcha] verify failed score=%.2f action=%s errors=%s', $result['score'], $result['action'], $codeList));
+                }
+                Flash::add('error', 'reCAPTCHAの確認に失敗しました。もう一度お試しください。');
+                return $response->withStatus(303)->withHeader('Location', '/login');
+            }
         }
 
         try {
@@ -282,6 +310,7 @@ final class AuthController
             'tenant_id' => $user['tenant_id'] ?? null,
         ]);
         SessionAuth::clearPendingMfa();
+        $_SESSION['show_login_announcements'] = true;
 
         $loginIp = null;
         try {
@@ -335,6 +364,16 @@ final class AuthController
             $ua = mb_substr($ua, 0, 512, 'UTF-8');
         }
         return $ua;
+    }
+
+    private function shouldBypassRecaptcha(): bool
+    {
+        $env = strtolower((string)($_ENV['APP_ENV'] ?? 'local'));
+        if ($env !== 'test') {
+            return false;
+        }
+        $raw = $_ENV['RECAPTCHA_BYPASS'] ?? '';
+        return filter_var($raw, FILTER_VALIDATE_BOOL) === true;
     }
 
     private function buildTrustCookie(string $token, \DateTimeImmutable $expiresAt): string

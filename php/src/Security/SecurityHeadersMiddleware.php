@@ -23,7 +23,17 @@ final class SecurityHeadersMiddleware implements MiddlewareInterface
 
         // Only append CSP if not already set to avoid overriding later customization.
         if (!$response->hasHeader('Content-Security-Policy')) {
-            $headers['Content-Security-Policy'] = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';";
+            $csp = [
+                "default-src 'self'",
+                "img-src 'self' data:",
+                "style-src 'self' 'unsafe-inline'",
+            ];
+            $recaptchaEnabled = filter_var($_ENV['RECAPTCHA_ENABLED'] ?? false, FILTER_VALIDATE_BOOL);
+            if ($recaptchaEnabled) {
+                $csp[] = "script-src 'self' https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/";
+                $csp[] = "frame-src https://www.google.com/recaptcha/";
+            }
+            $headers['Content-Security-Policy'] = implode('; ', $csp) . ';';
         }
 
         foreach ($headers as $name => $value) {

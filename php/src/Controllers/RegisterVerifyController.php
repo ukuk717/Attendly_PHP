@@ -146,7 +146,7 @@ final class RegisterVerifyController
         }
         unset($_SESSION['pending_registration']);
 
-        Flash::add('success', 'メール確認が完了しました。ログインしてください。');
+        Flash::add('success', 'メール確認が完了しました。ログイン後、パスキーを登録すると安全性と利便性が高まります。');
         return $response->withStatus(303)->withHeader('Location', '/login');
     }
 

@@ -1,6 +1,6 @@
 <div class="page-header">
   <h2>給与明細管理</h2>
-  <p class="form-note">送信済み給与明細の一覧・再送・ダウンロードリンクの発行ができます。</p>
+  <p class="form-note">送信済み給与明細の一覧・メール再送・ダウンロードができます。</p>
   <p><a class="btn link" href="/admin/payslips/send">給与明細を送信する</a></p>
 </div>
 
@@ -56,12 +56,14 @@
                 <?php endif; ?>
               </td>
               <td>
-                <a class="btn link" href="/admin/payslips/<?= $e((string)$row['id']) ?>/download">ダウンロードリンクを開く</a>
-                <form method="post" action="/admin/payslips/<?= $e((string)$row['id']) ?>/resend" class="form-inline" style="display:inline-flex; gap: 6px; margin-left: 6px;">
-                  <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
-                  <input type="hidden" name="return_to" value="<?= $e((string)($returnTo ?? '/admin/payslips')) ?>">
-                  <button type="submit" class="btn secondary" onclick="return confirm('給与明細の案内メールを再送します。よろしいですか？');">再送</button>
-                </form>
+                <div class="table-actions">
+                  <a class="btn link" href="/admin/payslips/<?= $e((string)$row['id']) ?>/download">ダウンロード</a>
+                  <form method="post" action="/admin/payslips/<?= $e((string)$row['id']) ?>/resend" class="table-action-form">
+                    <input type="hidden" name="csrf_token" value="<?= $e($csrf) ?>">
+                    <input type="hidden" name="return_to" value="<?= $e((string)($returnTo ?? '/admin/payslips')) ?>">
+                    <button type="submit" class="btn secondary" onclick="return confirm('給与明細の案内メールを再送します。よろしいですか？');">メールを再送</button>
+                  </form>
+                </div>
               </td>
             </tr>
           <?php endforeach; ?>
